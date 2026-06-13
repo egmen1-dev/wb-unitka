@@ -53,15 +53,23 @@ export default function CdekWidget({
   const [error, setError] = useState('');
   const mapCheckTimer = useRef(null);
 
-  const apiKey = import.meta.env.VITE_YANDEX_MAPS_API_KEY?.trim();
+  const mapsApiKey = import.meta.env.VITE_YANDEX_MAPS_API_KEY?.trim();
+  const geocoderApiKey =
+    import.meta.env.VITE_YANDEX_GEOCODER_API_KEY?.trim() || mapsApiKey;
 
   onSelectRef.current = onSelect;
   onReadyRef.current = onReady;
 
   useEffect(() => {
-    if (!apiKey) {
+    if (!mapsApiKey) {
       setStatus('error');
-      setError('Добавьте VITE_YANDEX_MAPS_API_KEY для карты СДЭК.');
+      setError('Добавьте VITE_YANDEX_MAPS_API_KEY (JavaScript API 3.0) для карты СДЭК.');
+      return undefined;
+    }
+
+    if (!geocoderApiKey) {
+      setStatus('error');
+      setError('Добавьте VITE_YANDEX_GEOCODER_API_KEY (HTTP Геокодер) для поиска адресов.');
       return undefined;
     }
 
@@ -208,7 +216,7 @@ export default function CdekWidget({
       ) : null}
       <div
         id={rootId}
-        className="min-h-[520px] w-full overflow-hidden rounded-xl border border-gray-200 bg-gray-50"
+        className="cdek-widget-root h-[560px] w-full rounded-xl border border-gray-200 bg-gray-50"
       />
       <p className="text-xs text-gray-500">
         Выберите город, тариф и пункт выдачи или доставку до двери, затем нажмите «Выбрать» в виджете.
