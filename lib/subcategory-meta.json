@@ -1,0 +1,582 @@
+{
+  "513": {
+    "label": "Гамаки",
+    "icon": "subcategoryDefault"
+  },
+  "559": {
+    "label": "Мультитулы",
+    "icon": "multitool"
+  },
+  "585": {
+    "label": "Лопаты туристические",
+    "icon": "shovel"
+  },
+  "586": {
+    "label": "Термосумки",
+    "icon": "subcategoryDefault"
+  },
+  "588": {
+    "label": "Стулья туристические",
+    "icon": "table"
+  },
+  "592": {
+    "label": "Столы туристические",
+    "icon": "table"
+  },
+  "602": {
+    "label": "Мангалы",
+    "icon": "kitchen"
+  },
+  "609": {
+    "label": "Грили электрические",
+    "icon": "subcategoryDefault"
+  },
+  "614": {
+    "label": "Блендеры",
+    "icon": "kitchen"
+  },
+  "618": {
+    "label": "Мясорубки электрические",
+    "icon": "subcategoryDefault"
+  },
+  "619": {
+    "label": "Миксеры",
+    "icon": "kitchen"
+  },
+  "642": {
+    "label": "Фены",
+    "icon": "hair"
+  },
+  "655": {
+    "label": "Наборы инструментов",
+    "icon": "toolkit"
+  },
+  "694": {
+    "label": "Микроволновые печи",
+    "icon": "subcategoryDefault"
+  },
+  "706": {
+    "label": "Аккумуляторы температуры",
+    "icon": "subcategoryDefault"
+  },
+  "709": {
+    "label": "Вафельницы",
+    "icon": "kitchen"
+  },
+  "770": {
+    "label": "Домкраты",
+    "icon": "jack"
+  },
+  "783": {
+    "label": "Органайзеры для хранения",
+    "icon": "organizer"
+  },
+  "784": {
+    "label": "Чехлы для автомобильных колес",
+    "icon": "car"
+  },
+  "792": {
+    "label": "Элементы питания",
+    "icon": "subcategoryDefault"
+  },
+  "826": {
+    "label": "Попкорницы",
+    "icon": "subcategoryDefault"
+  },
+  "834": {
+    "label": "Дуршлаги",
+    "icon": "kitchen"
+  },
+  "870": {
+    "label": "Кашпо",
+    "icon": "subcategoryDefault"
+  },
+  "879": {
+    "label": "Подставки кухонные",
+    "icon": "kitchen"
+  },
+  "893": {
+    "label": "Молокоотсосы механические",
+    "icon": "pump"
+  },
+  "908": {
+    "label": "Ножи туристические",
+    "icon": "subcategoryDefault"
+  },
+  "927": {
+    "label": "Мойки высокого давления",
+    "icon": "subcategoryDefault"
+  },
+  "931": {
+    "label": "Наборы автомобилиста",
+    "icon": "car"
+  },
+  "939": {
+    "label": "Обогреватели",
+    "icon": "heater"
+  },
+  "990": {
+    "label": "Прессы для чеснока",
+    "icon": "kitchen"
+  },
+  "1164": {
+    "label": "Дрели",
+    "icon": "airGun"
+  },
+  "1166": {
+    "label": "Перфораторы",
+    "icon": "airGun"
+  },
+  "1168": {
+    "label": "Шлифовальные машины",
+    "icon": "subcategoryDefault"
+  },
+  "1169": {
+    "label": "Пилы строительные",
+    "icon": "subcategoryDefault"
+  },
+  "1181": {
+    "label": "Корзины для белья",
+    "icon": "laundryBasket"
+  },
+  "1192": {
+    "label": "Вентиляторы",
+    "icon": "heater"
+  },
+  "1194": {
+    "label": "Наборы садовых инструментов",
+    "icon": "subcategoryDefault"
+  },
+  "1202": {
+    "label": "Салфетки для уборки",
+    "icon": "subcategoryDefault"
+  },
+  "1214": {
+    "label": "Опрыскиватели",
+    "icon": "spray"
+  },
+  "1216": {
+    "label": "Тележки садовые",
+    "icon": "wheelbarrow"
+  },
+  "1218": {
+    "label": "Шланги садовые",
+    "icon": "hose"
+  },
+  "1220": {
+    "label": "Секаторы",
+    "icon": "secateur"
+  },
+  "1223": {
+    "label": "Грабли",
+    "icon": "rake"
+  },
+  "1228": {
+    "label": "Совки садовые",
+    "icon": "subcategoryDefault"
+  },
+  "1233": {
+    "label": "Газонокосилки",
+    "icon": "lawnMower"
+  },
+  "1234": {
+    "label": "Воздуходувки",
+    "icon": "lawnMower"
+  },
+  "1236": {
+    "label": "Топоры",
+    "icon": "axe"
+  },
+  "1267": {
+    "label": "Надувная мебель",
+    "icon": "subcategoryDefault"
+  },
+  "1280": {
+    "label": "Лопаты садовые",
+    "icon": "shovel"
+  },
+  "1318": {
+    "label": "Сварочные аппараты",
+    "icon": "welding"
+  },
+  "1362": {
+    "label": "Фены технические",
+    "icon": "hair"
+  },
+  "1481": {
+    "label": "Рулетки",
+    "icon": "toolkit"
+  },
+  "1485": {
+    "label": "Фильтры для слива",
+    "icon": "sinkFilter"
+  },
+  "1507": {
+    "label": "Лопаты снеговые",
+    "icon": "snowShovel"
+  },
+  "1560": {
+    "label": "Мезороллеры",
+    "icon": "dermaroller"
+  },
+  "1569": {
+    "label": "Аппараты для сварки труб",
+    "icon": "pipeWelder"
+  },
+  "1608": {
+    "label": "Капучинаторы",
+    "icon": "kitchen"
+  },
+  "1769": {
+    "label": "Прессы для картофеля",
+    "icon": "potatoPress"
+  },
+  "1770": {
+    "label": "Кисточки кулинарные",
+    "icon": "subcategoryDefault"
+  },
+  "1800": {
+    "label": "Удалители косточек",
+    "icon": "cherryTool"
+  },
+  "2009": {
+    "label": "Блоки питания",
+    "icon": "subcategoryDefault"
+  },
+  "2052": {
+    "label": "Степлеры строительные",
+    "icon": "toolkit"
+  },
+  "2054": {
+    "label": "Паяльники",
+    "icon": "welding"
+  },
+  "2066": {
+    "label": "Молотки",
+    "icon": "axe"
+  },
+  "2070": {
+    "label": "Плиткорезы",
+    "icon": "toolkit"
+  },
+  "2072": {
+    "label": "Сумки строительные",
+    "icon": "bag"
+  },
+  "2073": {
+    "label": "Головки торцевые",
+    "icon": "subcategoryDefault"
+  },
+  "2083": {
+    "label": "Лестницы строительные",
+    "icon": "subcategoryDefault"
+  },
+  "2084": {
+    "label": "Стремянки",
+    "icon": "toolkit"
+  },
+  "2098": {
+    "label": "Емкости для масел и горючего",
+    "icon": "subcategoryDefault"
+  },
+  "2181": {
+    "label": "Ножовки",
+    "icon": "subcategoryDefault"
+  },
+  "2191": {
+    "label": "Пистолеты термоклеевые",
+    "icon": "toolkit"
+  },
+  "2197": {
+    "label": "Шуруповерты",
+    "icon": "airGun"
+  },
+  "2217": {
+    "label": "Разбрызгиватели и дождеватели",
+    "icon": "hose"
+  },
+  "2221": {
+    "label": "Бензопилы",
+    "icon": "chainsaw"
+  },
+  "2223": {
+    "label": "Триммеры садовые",
+    "icon": "lawnMower"
+  },
+  "2225": {
+    "label": "Кусторезы",
+    "icon": "secateur"
+  },
+  "2242": {
+    "label": "Пульверизаторы для растений",
+    "icon": "spray"
+  },
+  "2260": {
+    "label": "Кресла-шезлонги",
+    "icon": "subcategoryDefault"
+  },
+  "2294": {
+    "label": "Отвертки",
+    "icon": "subcategoryDefault"
+  },
+  "2295": {
+    "label": "Ножницы по металлу",
+    "icon": "subcategoryDefault"
+  },
+  "2296": {
+    "label": "Диски для УШМ",
+    "icon": "toolkit"
+  },
+  "2314": {
+    "label": "Выпрямители волос",
+    "icon": "hair"
+  },
+  "2350": {
+    "label": "Лопаты снеговые",
+    "icon": "snowShovel"
+  },
+  "2370": {
+    "label": "Лейки садовые",
+    "icon": "subcategoryDefault"
+  },
+  "2382": {
+    "label": "Биты для шуруповерта",
+    "icon": "airGun"
+  },
+  "2384": {
+    "label": "Сверла",
+    "icon": "subcategoryDefault"
+  },
+  "2386": {
+    "label": "Тиски",
+    "icon": "toolkit"
+  },
+  "2388": {
+    "label": "Пистолеты для монтажной пены и герметика",
+    "icon": "subcategoryDefault"
+  },
+  "2389": {
+    "label": "Труборезы ручные",
+    "icon": "subcategoryDefault"
+  },
+  "2397": {
+    "label": "Тестеры заряда АКБ",
+    "icon": "subcategoryDefault"
+  },
+  "2441": {
+    "label": "Маски для сварщиков",
+    "icon": "welding"
+  },
+  "2447": {
+    "label": "Инструменты для зачистки проводов",
+    "icon": "wireTool"
+  },
+  "2449": {
+    "label": "Угольники столярные",
+    "icon": "subcategoryDefault"
+  },
+  "2466": {
+    "label": "Пакеты пищевые",
+    "icon": "foodBag"
+  },
+  "2540": {
+    "label": "Граверы",
+    "icon": "subcategoryDefault"
+  },
+  "2541": {
+    "label": "Обогреватели",
+    "icon": "heater"
+  },
+  "2542": {
+    "label": "Конвекторы",
+    "icon": "heater"
+  },
+  "2550": {
+    "label": "Тепловые пушки",
+    "icon": "heater"
+  },
+  "2569": {
+    "label": "Аэраторы и скарификаторы газонные",
+    "icon": "lawnMower"
+  },
+  "2582": {
+    "label": "Аппараты для сахарной ваты",
+    "icon": "cottonCandy"
+  },
+  "2678": {
+    "label": "Аэрогрили",
+    "icon": "subcategoryDefault"
+  },
+  "2704": {
+    "label": "Ящики для инструментов",
+    "icon": "toolkit"
+  },
+  "2712": {
+    "label": "Щетки автомобильные",
+    "icon": "car"
+  },
+  "2715": {
+    "label": "Магниты бытовые",
+    "icon": "subcategoryDefault"
+  },
+  "2718": {
+    "label": "Пуско-зарядные устройства",
+    "icon": "subcategoryDefault"
+  },
+  "2783": {
+    "label": "Укрывной материал",
+    "icon": "agrofabric"
+  },
+  "2796": {
+    "label": "Wi-Fi-адаптеры",
+    "icon": "subcategoryDefault"
+  },
+  "2912": {
+    "label": "Щепы для копчения",
+    "icon": "subcategoryDefault"
+  },
+  "2939": {
+    "label": "Бочки садовые",
+    "icon": "subcategoryDefault"
+  },
+  "2995": {
+    "label": "Пылесосы строительные",
+    "icon": "subcategoryDefault"
+  },
+  "3092": {
+    "label": "Воронки автомобильные",
+    "icon": "car"
+  },
+  "3367": {
+    "label": "Мышеловки",
+    "icon": "subcategoryDefault"
+  },
+  "3520": {
+    "label": "Наборы туристической посуды",
+    "icon": "subcategoryDefault"
+  },
+  "3629": {
+    "label": "Шоколадные фонтаны",
+    "icon": "subcategoryDefault"
+  },
+  "3637": {
+    "label": "Терки и пилки для педикюра",
+    "icon": "pedicure"
+  },
+  "3664": {
+    "label": "Ершики кухонные",
+    "icon": "kitchen"
+  },
+  "3668": {
+    "label": "Болторезы",
+    "icon": "subcategoryDefault"
+  },
+  "3734": {
+    "label": "Органайзеры для косметики",
+    "icon": "cosmetic"
+  },
+  "3749": {
+    "label": "Снегоуборщики",
+    "icon": "lawnMower"
+  },
+  "3851": {
+    "label": "Походный душ",
+    "icon": "subcategoryDefault"
+  },
+  "3863": {
+    "label": "Генераторы",
+    "icon": "electronics"
+  },
+  "4005": {
+    "label": "Электроды",
+    "icon": "electrodes"
+  },
+  "4084": {
+    "label": "Пневмопистолеты",
+    "icon": "airGun"
+  },
+  "4473": {
+    "label": "Насосы погружные",
+    "icon": "pump"
+  },
+  "4663": {
+    "label": "Коврики в кухонные ящики",
+    "icon": "toolkit"
+  },
+  "4810": {
+    "label": "Лебедки ручные",
+    "icon": "subcategoryDefault"
+  },
+  "5371": {
+    "label": "Мешки строительные",
+    "icon": "subcategoryDefault"
+  },
+  "5457": {
+    "label": "Тачки садовые",
+    "icon": "wheelbarrow"
+  },
+  "5501": {
+    "label": "Пельменницы",
+    "icon": "dumpling"
+  },
+  "5581": {
+    "label": "Плиты настольные",
+    "icon": "subcategoryDefault"
+  },
+  "5734": {
+    "label": "Массажеры косметические",
+    "icon": "beauty"
+  },
+  "6898": {
+    "label": "Дровоколы электрические",
+    "icon": "lawnMower"
+  },
+  "6949": {
+    "label": "Шатры и беседки",
+    "icon": "subcategoryDefault"
+  },
+  "7041": {
+    "label": "Таблички и бирки для рассады",
+    "icon": "subcategoryDefault"
+  },
+  "7050": {
+    "label": "Принадлежности для гриля и барбекю",
+    "icon": "subcategoryDefault"
+  },
+  "7051": {
+    "label": "Принадлежности для мангала",
+    "icon": "kitchen"
+  },
+  "7073": {
+    "label": "Лейки комнатные",
+    "icon": "subcategoryDefault"
+  },
+  "7103": {
+    "label": "Гибочные станки",
+    "icon": "subcategoryDefault"
+  },
+  "7188": {
+    "label": "Вилы",
+    "icon": "subcategoryDefault"
+  },
+  "7194": {
+    "label": "Метлы садовые",
+    "icon": "broom"
+  },
+  "7243": {
+    "label": "Скреперы снегоуборочные",
+    "icon": "lawnMower"
+  },
+  "7541": {
+    "label": "Крысоловки",
+    "icon": "subcategoryDefault"
+  },
+  "7726": {
+    "label": "Уровни строительные",
+    "icon": "toolkit"
+  },
+  "8417": {
+    "label": "Бассейны каркасные",
+    "icon": "subcategoryDefault"
+  }
+}

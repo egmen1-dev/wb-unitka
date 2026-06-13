@@ -1,0 +1,15 @@
+{
+  "buildCommand": "node ../node_modules/vite/bin/vite.js build --config vite.config.js",
+  "outputDirectory": "dist",
+  "installCommand": "cd .. && npm install",
+  "framework": null,
+  "functions": {
+    "../api/unit-calc/sync.js": {
+      "maxDuration": 120
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

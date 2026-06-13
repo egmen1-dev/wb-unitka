@@ -1,0 +1,17 @@
+{
+  "buildCommand": "node node_modules/vite/bin/vite.js build --config wb-unit-calc/vite.config.js",
+  "outputDirectory": "wb-unit-calc/dist",
+  "framework": null,
+  "functions": {
+    "api/unit-calc/sync.js": {
+      "maxDuration": 300
+    },
+    "api/unit-calc/supplier-price.js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

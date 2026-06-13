@@ -1,0 +1,8 @@
+node_modules
+dist
+.DS_Store
+*.local
+.vercel
+wb-unit-economics-sheet/cache/
+tmp/
+scripts/cdek-map-debug.png
