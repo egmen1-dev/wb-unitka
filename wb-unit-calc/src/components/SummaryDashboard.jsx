@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { fmtMoney, fmtPct, profitClass } from '../lib/format';
 import { buildLogisticsReconciliation } from '@lib/logistics-compare.js';
 import { primaryMargin, primaryProfit, resolveScheme, schemeLabel } from '@lib/unit-scheme.js';
@@ -10,7 +10,7 @@ import {
   topRiskRows,
 } from '../lib/margin-insights';
 
-export default function SummaryDashboard({
+function SummaryDashboard({
   rows,
   settings,
   meta,
@@ -21,12 +21,11 @@ export default function SummaryDashboard({
   onSelectRow,
   onOpenLogistics,
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const scheme = resolveScheme(settings);
   const label = schemeLabel(scheme);
 
   const visibleRows = useMemo(() => filterRowsByBrand(rows, brandFilter), [rows, brandFilter]);
-  const brandOptions = useMemo(() => collectBrandOptions(rows), [rows]);
 
   const stats = useMemo(() => {
     const withData = visibleRows.filter((r) => r.salePrice > 0 && primaryProfit(r, scheme) != null);
@@ -44,6 +43,23 @@ export default function SummaryDashboard({
         : null;
 
     const missingPurchase = visibleRows.filter((r) => !r.purchasePrice).length;
+
+    if (!open) {
+      return {
+        total: visibleRows.length,
+        withPurchase: withPurchase.length,
+        profitable: profitable.length,
+        unprofitable: unprofitable.length,
+        lowMargin: lowMargin.length,
+        sumProfit,
+        avgMargin,
+        missingPurchase,
+        bucketStats: { eligible: [] },
+        risks: [],
+        logisticsBrief: { withActual: 0, okPct: 0 },
+      };
+    }
+
     const bucketStats = buildMarginBucketStats(visibleRows, scheme);
     const risks = topRiskRows(visibleRows, 8, scheme);
     const logisticsBrief = buildLogisticsReconciliation(visibleRows, settings);
@@ -61,7 +77,12 @@ export default function SummaryDashboard({
       risks,
       logisticsBrief,
     };
-  }, [visibleRows, settings, scheme]);
+  }, [open, visibleRows, settings, scheme]);
+
+  const brandOptions = useMemo(
+    () => (open ? collectBrandOptions(rows) : []),
+    [open, rows]
+  );
 
   if (!rows.length) return null;
 
@@ -347,3 +368,5 @@ export default function SummaryDashboard({
     </section>
   );
 }
+
+export default memo(SummaryDashboard);

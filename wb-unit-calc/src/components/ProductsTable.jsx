@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useScrollRestore } from '../lib/use-scroll-restore';
+import { useVirtualRows } from '../lib/use-virtual-rows';
 import { fmtMoney, fmtNum, fmtPct, marginClass, profitClass } from '../lib/format';
 import { primaryProfit, resolveScheme } from '@lib/unit-scheme.js';
 import { getProductOverride } from '../lib/product-overrides';
@@ -321,6 +322,16 @@ function ProductsTable({
     return `q:${q}:${filtered.length}`;
   }, [query, filtered.length]);
 
+  const { start: vStart, end: vEnd, paddingTop, paddingBottom } = useVirtualRows(
+    tableRef,
+    filtered.length,
+    tableBodyKey
+  );
+  const visibleRows = useMemo(
+    () => filtered.slice(vStart, vEnd),
+    [filtered, vStart, vEnd]
+  );
+
   useLayoutEffect(() => {
     const el = tableRef.current;
     if (!el) return;
@@ -525,7 +536,13 @@ function ProductsTable({
                 </td>
               </tr>
             ) : (
-            filtered.map((row) => (
+            <>
+            {paddingTop > 0 ? (
+              <tr aria-hidden="true" style={{ height: paddingTop }}>
+                <td colSpan={visibleColumns.length} className="p-0 border-0" />
+              </tr>
+            ) : null}
+            {visibleRows.map((row) => (
               <tr
                 key={row.nmId}
                 data-nm-id={row.nmId}
@@ -593,6 +610,12 @@ function ProductsTable({
                 })}
               </tr>
             ))
+            {paddingBottom > 0 ? (
+              <tr aria-hidden="true" style={{ height: paddingBottom }}>
+                <td colSpan={visibleColumns.length} className="p-0 border-0" />
+              </tr>
+            ) : null}
+            </>
             )}
           </tbody>
         </table>

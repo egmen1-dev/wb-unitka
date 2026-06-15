@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { rowToCalculatorInput } from '@lib/unit-economics/calc-input.js';
-import { calculateUnitEconomicsRow } from '@lib/unit-economics/calculator.js';
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import { DEFAULT_UNIT_SETTINGS, mergeUnitSettings } from '@lib/unit-economics/settings.js';
 import AppShell from './components/AppShell';
 import ApiKeyPanel from './components/ApiKeyPanel';
@@ -71,7 +69,8 @@ import {
 } from './lib/storage';
 import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';
 import { buildEffectiveWbCache } from '@lib/wb-sync-cache.js';
-import { mergeRowOverrides, setProductOverride } from './lib/product-overrides';
+import { createRecalcRows } from './lib/recalc-rows-cache';
+import { setProductOverride } from './lib/product-overrides';
 import { readJsonResponse } from './lib/http';
 import { isAdvertRateLimitMessage } from '@lib/wb-advert-stats.js';
 
@@ -125,19 +124,7 @@ async function syncFromWb({
   return data;
 }
 
-function recalcRows(baseRows, purchases, settings, productOverrides = {}) {
-  return baseRows.map((row) => {
-    const vendor = String(row.vendorCode || '');
-    const override = purchases[vendor];
-    const purchasePrice =
-      override != null && override !== '' ? Number(override) : row.purchasePrice;
-
-    return calculateUnitEconomicsRow(
-      mergeRowOverrides(rowToCalculatorInput(row, purchasePrice), productOverrides),
-      settings
-    );
-  });
-}
+const recalcRowsCached = createRecalcRows();
 
 function mergeRowAdFields(prevRows, nextRows) {
   if (!prevRows?.length) return nextRows;
@@ -351,7 +338,7 @@ export default function App() {
   );
 
   const rows = useMemo(
-    () => recalcRows(baseRows, purchases, settings, productOverrides),
+    () => recalcRowsCached(baseRows, purchases, settings, productOverrides),
     [baseRows, purchases, settings, productOverrides]
   );
 
@@ -670,7 +657,8 @@ export default function App() {
   ]);
 
   const applySyncResult = useCallback(
-    (data) => {
+    (data, { urgent = false } = {}) => {
+      const commit = () => {
       setBaseRows((prev) => mergeRowAdFields(prev, slimRowsForCache(data.rows)));
       setSyncedAt(data.syncedAt);
       if (data.productCache?.length || data.tariffCache || data.realizationSnapshot) {
@@ -798,6 +786,9 @@ export default function App() {
         });
         setCloudStatus(`Закупки из прайса: ${Object.keys(data.supplierPurchases).length} из ${data.total}`);
       }
+      };
+      if (urgent) commit();
+      else startTransition(commit);
     },
     [activeCatalog, purchases]
   );
@@ -919,7 +910,7 @@ export default function App() {
             cardsSyncedAt: bootstrap.cardsSyncedAt || bootstrap.syncedAt,
             tariffCache: bootstrap.tariffCache || cache?.tariffCache || null,
           };
-          applySyncResult(bootstrap);
+          applySyncResult(bootstrap, { urgent: true });
           partialReady = true;
           setSyncPartialReady(true);
           setStep('bootstrap', {
