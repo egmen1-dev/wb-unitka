@@ -609,7 +609,7 @@ function ProductsTable({
                   );
                 })}
               </tr>
-            ))
+            ))}
             {paddingBottom > 0 ? (
               <tr aria-hidden="true" style={{ height: paddingBottom }}>
                 <td colSpan={visibleColumns.length} className="p-0 border-0" />
