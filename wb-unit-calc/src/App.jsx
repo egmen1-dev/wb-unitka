@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import { DEFAULT_UNIT_SETTINGS, mergeUnitSettings } from '@lib/unit-economics/settings.js';
+import UpdateBanner from './components/UpdateBanner';
 import AppShell from './components/AppShell';
 import ApiKeyPanel from './components/ApiKeyPanel';
 import ProductsTable from './components/ProductsTable';
@@ -1315,6 +1316,7 @@ export default function App() {
         )
       }
     >
+      <UpdateBanner />
       {error ? (
         <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-800 lg:px-6">
           {error}
