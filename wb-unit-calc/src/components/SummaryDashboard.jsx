@@ -97,51 +97,83 @@ function SummaryDashboard({
   }
 
   return (
-    <section className="panel py-3">
+    <section
+      className={`panel overflow-hidden p-0 transition-shadow ${
+        open ? '' : 'shadow-sm ring-1 ring-brand-200/70 hover:ring-brand-300 hover:shadow-md'
+      }`}
+    >
       <button
         type="button"
-        className="flex w-full items-center justify-between text-left"
+        aria-expanded={open}
+        aria-controls="summary-dashboard-body"
+        className="group flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-brand-50/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-500"
         onClick={() => setOpen((v) => !v)}
       >
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-          <span className="font-semibold text-slate-800">Сводка · {label}</span>
-          <span className="text-slate-600">
-            {stats.withPurchase} с закупкой · прибыль {fmtMoney(stats.sumProfit)} · маржа{' '}
-            {fmtPct(stats.avgMargin)}
-          </span>
-          <span className="text-emerald-700">+{stats.profitable}</span>
-          <span className="text-rose-700">−{stats.unprofitable}</span>
-          {stats.lowMargin > 0 ? (
-            <span className="rounded bg-rose-50 px-1.5 py-0.5 text-rose-800 ring-1 ring-rose-200">
-              &lt;5% маржи: {stats.lowMargin}
+        <span
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold transition-colors ${
+            open
+              ? 'bg-brand-600 text-white'
+              : 'bg-brand-100 text-brand-700 ring-2 ring-brand-200 group-hover:bg-brand-200 group-hover:ring-brand-300'
+          }`}
+          aria-hidden
+        >
+          {open ? '▲' : '▼'}
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-slate-800">Сводка · {label}</span>
+            {!open ? (
+              <span className="rounded-full bg-brand-600 px-2.5 py-1 text-xs font-medium text-white shadow-sm group-hover:bg-brand-700">
+                Развернуть
+              </span>
+            ) : (
+              <span className="text-xs font-medium text-slate-500">Нажмите, чтобы свернуть</span>
+            )}
+          </div>
+
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-600">
+            <span>
+              {stats.withPurchase} с закупкой · прибыль {fmtMoney(stats.sumProfit)} · маржа{' '}
+              {fmtPct(stats.avgMargin)}
             </span>
-          ) : null}
-          {stats.missingPurchase > 0 ? (
-            <span className="text-amber-700">без закупки: {stats.missingPurchase}</span>
-          ) : null}
-          {brandFilter.length ? (
-            <span className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-800 ring-1 ring-brand-200">
-              бренд: {brandFilter.length === 1 ? brandFilter[0] : `${brandFilter.length} шт.`}
-            </span>
-          ) : null}
-          {stats.logisticsBrief.withActual > 0 ? (
-            <button
-              type="button"
-              className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenLogistics?.();
-              }}
-            >
-              логистика: {Math.round(stats.logisticsBrief.okPct * 100)}% сходится →
-            </button>
-          ) : null}
+            <span className="text-emerald-700">+{stats.profitable}</span>
+            <span className="text-rose-700">−{stats.unprofitable}</span>
+            {stats.lowMargin > 0 ? (
+              <span className="rounded bg-rose-50 px-1.5 py-0.5 text-rose-800 ring-1 ring-rose-200">
+                &lt;5% маржи: {stats.lowMargin}
+              </span>
+            ) : null}
+            {stats.missingPurchase > 0 ? (
+              <span className="text-amber-700">без закупки: {stats.missingPurchase}</span>
+            ) : null}
+            {brandFilter.length ? (
+              <span className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-800 ring-1 ring-brand-200">
+                бренд: {brandFilter.length === 1 ? brandFilter[0] : `${brandFilter.length} шт.`}
+              </span>
+            ) : null}
+          </div>
         </div>
-        <span className="text-slate-400">{open ? '▲' : '▼'}</span>
+
+        {!open ? (
+          <span className="hidden shrink-0 text-xs font-medium text-brand-700 sm:inline group-hover:underline">
+            Подробная аналитика →
+          </span>
+        ) : null}
       </button>
 
       {open ? (
-        <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
+        <div id="summary-dashboard-body" className="space-y-4 border-t border-slate-200 px-4 pb-4 pt-4">
+          {stats.logisticsBrief.withActual > 0 ? (
+            <button
+              type="button"
+              className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 hover:bg-sky-100"
+              onClick={() => onOpenLogistics?.()}
+            >
+              Логистика: {Math.round(stats.logisticsBrief.okPct * 100)}% сходится с отчётом WB — открыть
+              сверку →
+            </button>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               { label: 'Товаров', value: stats.total },
