@@ -626,10 +626,20 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       .filter((p) => p.salePrice > 0);
 
     const catalogNmIds = new Set(products.map((p) => Number(p.nmId)).filter(Boolean));
-    const regionDemand = buildRegionDemandSnapshot(regionSalesResult.report, {
+    let regionDemand = buildRegionDemandSnapshot(regionSalesResult.report, {
       catalogNmIds,
       tariffList: [...tariffByName.values()],
     });
+    if (
+      regionDemand.totalQty === 0 &&
+      catalogNmIds.size > 0 &&
+      (regionSalesResult.report?.length ?? 0) > 0
+    ) {
+      regionDemand = buildRegionDemandSnapshot(regionSalesResult.report, {
+        catalogNmIds: null,
+        tariffList: [...tariffByName.values()],
+      });
+    }
 
     const realizationOverlap = computeRealizationCatalogOverlap(products, realization);
     const advertLookup = serializeAdvertLookup(advertStats.byNmId, products);

@@ -1000,6 +1000,13 @@ export default function App() {
         const enrichDetail = [
           data.realizationPeriod ? 'отчёт' : null,
           data.ordersWithData ? 'заказы' : null,
+          data.regionSalesError
+            ? 'регионы: ошибка'
+            : data.regionSalesSynced && data.regionSalesTotalQty > 0
+              ? `регионы ${Math.round(data.regionSalesTotalQty).toLocaleString('ru-RU')}`
+              : data.regionSalesSynced
+                ? 'регионы: 0'
+                : null,
           data.advertError
             ? 'реклама: ошибка'
             : data.advertSynced && data.totalAdSpend > 0
