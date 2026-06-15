@@ -315,18 +315,25 @@ function ProductsTable({
     return () => el.removeEventListener('scroll', saveScroll);
   }, []);
 
+  const tableBodyKey = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return 'all';
+    return `q:${q}:${filtered.length}`;
+  }, [query, filtered.length]);
+
   useLayoutEffect(() => {
     const el = tableRef.current;
-    if (!el || scrollPosRef.current <= 0) return;
-    el.scrollTop = scrollPosRef.current;
-  }, [rows]);
-
-  useEffect(() => {
+    if (!el) return;
     const q = query.trim();
-    if (!q) return;
-    scrollPosRef.current = 0;
-    if (tableRef.current) tableRef.current.scrollTop = 0;
-  }, [query]);
+    if (q) {
+      el.scrollTop = 0;
+      scrollPosRef.current = 0;
+      return;
+    }
+    if (scrollPosRef.current > 0) {
+      el.scrollTop = scrollPosRef.current;
+    }
+  }, [tableBodyKey, rows, query]);
 
   useEffect(() => {
     if (!dashboardQuery) return undefined;
@@ -508,7 +515,7 @@ function ProductsTable({
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody key={tableBodyKey}>
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={visibleColumns.length} className="px-4 py-10 text-center text-sm text-slate-500">
@@ -517,8 +524,8 @@ function ProductsTable({
                     : 'Нет строк по выбранным фильтрам'}
                 </td>
               </tr>
-            ) : null}
-            {filtered.map((row) => (
+            ) : (
+            filtered.map((row) => (
               <tr
                 key={row.nmId}
                 data-nm-id={row.nmId}
@@ -585,7 +592,8 @@ function ProductsTable({
                   );
                 })}
               </tr>
-            ))}
+            ))
+            )}
           </tbody>
         </table>
       </div>

@@ -36,6 +36,12 @@ function matchesVendorCode(query, vendorCode) {
   return false;
 }
 
+/** Артикул вида ST-60W, 61738.0 — ищем по vendor/nmId, не по названию («60 штук» и т.п.). */
+function isVendorCodeQuery(query) {
+  const compact = compactAlnum(query);
+  return compact.length >= 3 && /[a-z]/.test(compact) && /\d/.test(compact);
+}
+
 export function rowMatchesProductSearch(row, query) {
   const needle = normalizeSearchText(query);
   if (!needle) return true;
@@ -45,6 +51,8 @@ export function rowMatchesProductSearch(row, query) {
   const nm = String(row.nmId ?? '');
   const digitsOnly = needle.replace(/\s/g, '');
   if (/^\d{3,}$/.test(digitsOnly) && nm.includes(digitsOnly)) return true;
+
+  if (isVendorCodeQuery(query)) return false;
 
   const title = normalizeSearchText(row.title);
   const brand = normalizeSearchText(row.brand);
