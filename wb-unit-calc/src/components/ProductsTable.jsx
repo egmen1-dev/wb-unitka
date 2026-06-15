@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useScrollRestore } from '../lib/use-scroll-restore';
 import { fmtMoney, fmtNum, fmtPct, marginClass, profitClass } from '../lib/format';
 import { primaryProfit, resolveScheme } from '@lib/unit-scheme.js';
 import { getProductOverride } from '../lib/product-overrides';
+import { rowMatchesBrandFilter } from '../lib/brand-filter';
+import { rowMatchesProductSearch } from '../lib/product-search';
 import { MARGIN_BUCKETS, rowMatchesMarginFilter } from '../lib/margin-insights';
+import BrandFilter from './BrandFilter';
 
 const MONEY_KEYS = new Set([
   'purchasePrice',
@@ -38,6 +41,7 @@ const PCT_KEYS = new Set([
 const CORE_COLUMN_KEYS = new Set([
   'nmId',
   'vendorCode',
+  'brand',
   'title',
   'orders7d',
   'fbsAvgDeliveryHours',
@@ -58,7 +62,7 @@ const CORE_COLUMN_KEYS = new Set([
 const COLUMNS = [
   { key: 'nmId', label: 'Арт. WB', sticky: true },
   { key: 'vendorCode', label: 'Арт. продавца', sticky: true },
-  { key: 'brand', label: 'Бренд' },
+  { key: 'brand', label: 'Бренд', sortable: true },
   { key: 'title', label: 'Название', wide: true },
   { key: 'stockFbs', label: 'FBS', hint: 'Остаток на складе продавца' },
   { key: 'stockFbo', label: 'FBO' },
@@ -227,7 +231,7 @@ function exportCsv(rows, columns) {
   URL.revokeObjectURL(url);
 }
 
-export default function ProductsTable({
+function ProductsTable({
   rows,
   settings = {},
   purchases,
@@ -237,6 +241,8 @@ export default function ProductsTable({
   onRowClick,
   marginFilter = null,
   onMarginFilterClear,
+  brandFilter = [],
+  onBrandFilterChange,
   highlightNmId = null,
   onHighlightConsumed,
   dashboardQuery = '',
@@ -250,6 +256,7 @@ export default function ProductsTable({
   const [sortDir, setSortDir] = useState('desc');
   const [compactView, setCompactView] = useState(true);
   const tableRef = useRef(null);
+  const scrollPosRef = useRef(0);
 
   const visibleColumns = useMemo(
     () => (compactView ? COLUMNS.filter((col) => CORE_COLUMN_KEYS.has(col.key)) : COLUMNS),
@@ -263,35 +270,70 @@ export default function ProductsTable({
   }, [marginFilter]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
+    const searchActive = Boolean(q);
     let list = rows.filter((row) => {
+      if (searchActive) {
+        return rowMatchesProductSearch(row, q);
+      }
       if (onlyWithPurchase && !row.purchasePrice) return false;
       if (onlyProfitable && !(primaryProfit(row, scheme) > 0)) return false;
+      if (!rowMatchesBrandFilter(row, brandFilter)) return false;
       if (!rowMatchesMarginFilter(row, marginFilter, scheme)) return false;
-      if (!q) return true;
-      return [row.nmId, row.vendorCode, row.brand, row.title]
-        .filter(Boolean)
-        .some((part) => String(part).toLowerCase().includes(q));
+      return true;
     });
 
     if (sortKey) {
       list = [...list].sort((a, b) => {
-        const av = a[sortKey] ?? -Infinity;
-        const bv = b[sortKey] ?? -Infinity;
-        return sortDir === 'asc' ? av - bv : bv - av;
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        if (sortKey === 'brand' || sortKey === 'title' || sortKey === 'vendorCode') {
+          const cmp = String(av ?? '').localeCompare(String(bv ?? ''), 'ru');
+          return sortDir === 'asc' ? cmp : -cmp;
+        }
+        const an = av ?? -Infinity;
+        const bn = bv ?? -Infinity;
+        return sortDir === 'asc' ? an - bn : bn - an;
       });
     }
 
     return list;
-  }, [rows, query, onlyWithPurchase, onlyProfitable, marginFilter, sortKey, sortDir, scheme]);
+  }, [rows, query, onlyWithPurchase, onlyProfitable, brandFilter, marginFilter, sortKey, sortDir, scheme]);
 
-  useScrollRestore(tableRef, 'wb-unit-calc:scroll:calc', filtered.length > 0);
+  useScrollRestore(tableRef, 'wb-unit-calc:scroll:calc', rows.length > 0);
+
+  useEffect(() => {
+    const el = tableRef.current;
+    if (!el) return undefined;
+    const saveScroll = () => {
+      const top = el.scrollTop;
+      // DOM-перерисовка tbody сбрасывает scrollTop в 0 и шлёт ложный scroll — не затираем позицию.
+      if (top === 0 && scrollPosRef.current > 0) return;
+      scrollPosRef.current = top;
+    };
+    el.addEventListener('scroll', saveScroll, { passive: true });
+    return () => el.removeEventListener('scroll', saveScroll);
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = tableRef.current;
+    if (!el || scrollPosRef.current <= 0) return;
+    el.scrollTop = scrollPosRef.current;
+  }, [rows]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) return;
+    scrollPosRef.current = 0;
+    if (tableRef.current) tableRef.current.scrollTop = 0;
+  }, [query]);
 
   useEffect(() => {
     if (!dashboardQuery) return undefined;
-    setQuery(dashboardQuery);
+    setQuery(String(dashboardQuery));
+    onMarginFilterClear?.();
     onDashboardQueryConsumed?.();
-  }, [dashboardQuery, onDashboardQueryConsumed]);
+  }, [dashboardQuery]);
 
   useEffect(() => {
     if (!highlightNmId || !tableRef.current) return undefined;
@@ -302,7 +344,7 @@ export default function ProductsTable({
     rowEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
     const timer = setTimeout(() => onHighlightConsumed?.(), 2500);
     return () => clearTimeout(timer);
-  }, [highlightNmId, filtered, onHighlightConsumed]);
+  }, [highlightNmId, onHighlightConsumed]);
 
   function toggleSort(key) {
     if (sortKey === key) {
@@ -361,10 +403,35 @@ export default function ProductsTable({
             <p className="mt-1 text-xs text-slate-500">
               {filtered.length} из {rows.length}. Жёлтая рамка — ручная правка закупки, упаковки, обработки, доп.
               расходов. Красная ячейка — маржа &lt; 5%.
-              {marginFilter ? (
+              {query.trim() ? (
                 <>
                   {' '}
-                  · фильтр: <span className="font-medium text-brand-700">{marginFilterLabel}</span>
+                  · поиск: <span className="font-medium text-brand-700">«{query.trim()}»</span>
+                  <button type="button" className="ml-1 text-brand-700 underline" onClick={() => setQuery('')}>
+                    сбросить
+                  </button>
+                </>
+              ) : null}
+              {brandFilter.length ? (
+                <>
+                  {' '}
+                  · бренд:{' '}
+                  <span className="font-medium text-brand-700">
+                    {brandFilter.length === 1 ? brandFilter[0] : `${brandFilter.length} шт.`}
+                  </span>
+                  <button
+                    type="button"
+                    className="ml-1 text-brand-700 underline"
+                    onClick={() => onBrandFilterChange?.([])}
+                  >
+                    сбросить
+                  </button>
+                </>
+              ) : null}
+              {!query.trim() && marginFilter ? (
+                <>
+                  {' '}
+                  · маржа: <span className="font-medium text-brand-700">{marginFilterLabel}</span>
                   <button
                     type="button"
                     className="ml-1 text-brand-700 underline"
@@ -380,11 +447,19 @@ export default function ProductsTable({
             <button type="button" className="btn-secondary" onClick={() => exportCsv(filtered, visibleColumns)}>
               CSV
             </button>
+            <BrandFilter rows={rows} selected={brandFilter} onChange={onBrandFilterChange} />
             <input
               className="input w-56"
-              placeholder="Поиск…"
+              placeholder="Поиск: артикул, nmId, бренд…"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setQuery(next);
+                if (next.trim() && marginFilter) onMarginFilterClear?.();
+              }}
+              type="search"
+              autoComplete="off"
+              spellCheck={false}
             />
             <label className="flex items-center gap-2 text-xs text-slate-600">
               <input
@@ -434,6 +509,15 @@ export default function ProductsTable({
             </tr>
           </thead>
           <tbody>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={visibleColumns.length} className="px-4 py-10 text-center text-sm text-slate-500">
+                  {query.trim()
+                    ? `Ничего не найдено по «${query.trim()}»`
+                    : 'Нет строк по выбранным фильтрам'}
+                </td>
+              </tr>
+            ) : null}
             {filtered.map((row) => (
               <tr
                 key={row.nmId}
@@ -508,3 +592,5 @@ export default function ProductsTable({
     </section>
   );
 }
+
+export default memo(ProductsTable);

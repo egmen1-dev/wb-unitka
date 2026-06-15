@@ -1,20 +1,27 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
-/** Запоминает scrollTop контейнера между перезагрузками вкладки. */
-export function useScrollRestore(containerRef, storageKey, ready = true) {
+/** Сохраняет scrollTop в sessionStorage. Восстановление — только один раз при монтировании. */
+export function useScrollRestore(containerRef, storageKey, enabled = true) {
+  const restoredRef = useRef(false);
+
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || !storageKey || !ready) return undefined;
+    if (!el || !storageKey || !enabled) return undefined;
 
-    try {
-      const saved = sessionStorage.getItem(storageKey);
-      if (saved) {
-        requestAnimationFrame(() => {
-          el.scrollTop = Number(saved) || 0;
-        });
+    if (!restoredRef.current) {
+      restoredRef.current = true;
+      try {
+        const saved = sessionStorage.getItem(storageKey);
+        if (saved) {
+          requestAnimationFrame(() => {
+            if (containerRef.current) {
+              containerRef.current.scrollTop = Number(saved) || 0;
+            }
+          });
+        }
+      } catch {
+        // sessionStorage недоступен
       }
-    } catch {
-      // sessionStorage недоступен
     }
 
     const onScroll = () => {
@@ -27,5 +34,5 @@ export function useScrollRestore(containerRef, storageKey, ready = true) {
 
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [containerRef, storageKey, ready]);
+  }, [containerRef, storageKey, enabled]);
 }

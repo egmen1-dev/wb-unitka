@@ -10,6 +10,7 @@ import SettingsPanel from './components/SettingsPanel';
 import SummaryDashboard from './components/SummaryDashboard';
 import LogisticsReconcilePanel from './components/LogisticsReconcilePanel';
 import ActualPnlPanel from './components/ActualPnlPanel';
+import RegionsPanel from './components/RegionsPanel';
 import SupplierPricePanel from './components/SupplierPricePanel';
 import TeamPanel from './components/TeamPanel';
 import TeamPermissionsPanel from './components/TeamPermissionsPanel';
@@ -27,6 +28,7 @@ import {
   resolveMyPermissions,
   touchTeamMember,
 } from '@lib/team-permissions.js';
+import { mergeWorkspaceProfiles } from '@lib/workspace-merge.js';
 import {
   readSectionFromUrl,
   resolveInitialSection,
@@ -71,14 +73,13 @@ import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';
 import { buildEffectiveWbCache } from '@lib/wb-sync-cache.js';
 import { mergeRowOverrides, setProductOverride } from './lib/product-overrides';
 import { readJsonResponse } from './lib/http';
+import { isAdvertRateLimitMessage } from '@lib/wb-advert-stats.js';
 
 function readBootCache() {
   const team = getTeamFromUrl() || loadStoredTeam() || '';
   const cache = team ? loadWorkspaceCache(team) : null;
   return { team, cache };
 }
-
-const BOOT = readBootCache();
 
 function saveWorkspaceSnapshot(teamCode, data) {
   if (!teamCode || !data?.payload) return;
@@ -159,15 +160,48 @@ function mergeRowAdFields(prevRows, nextRows) {
   });
 }
 
-function applyWorkspacePayload(payload, setters) {
+function bootProfiles(bootPayload) {
+  const teamProfiles = bootPayload?.profiles;
+  const localProfiles = loadProfiles();
+  if (teamProfiles?.length || localProfiles?.length) {
+    return mergeWorkspaceProfiles(localProfiles, teamProfiles);
+  }
+  return [];
+}
+
+function bootActiveProfileId(bootPayload, profiles) {
+  const candidates = [bootPayload?.activeProfileId, loadActiveProfileId(), profiles[0]?.id].filter(
+    Boolean
+  );
+  for (const id of candidates) {
+    if (profiles.some((profile) => profile.id === id)) return id;
+  }
+  return '';
+}
+
+function applyWorkspacePayload(payload, setters, { keepRows = [], keepProfiles = [] } = {}) {
   if (!payload) return;
   if (payload.ownerClientId != null) setters.setOwnerClientId(payload.ownerClientId);
 
-  if (payload.profiles !== undefined) setters.setProfiles(payload.profiles);
-  if (payload.activeProfileId !== undefined) setters.setActiveProfileId(payload.activeProfileId || '');
-  if (payload.purchases !== undefined) setters.setPurchases(payload.purchases);
-  if (payload.supplierCatalogs !== undefined) setters.setSupplierCatalogs(payload.supplierCatalogs);
-  if (payload.productOverrides !== undefined) setters.setProductOverrides(payload.productOverrides);
+  const mergedProfiles = mergeWorkspaceProfiles(keepProfiles, payload.profiles);
+  if (mergedProfiles.length) {
+    setters.setProfiles(mergedProfiles);
+    const activeId =
+      [payload.activeProfileId, keepProfiles.find((p) => p.token)?.id, mergedProfiles[0]?.id].find(
+        (id) => id && mergedProfiles.some((profile) => profile.id === id)
+      ) || '';
+    if (activeId) setters.setActiveProfileId(activeId);
+  }
+
+  if (payload.purchases !== undefined) {
+    setters.setPurchases({ ...payload.purchases });
+  }
+  if (payload.supplierCatalogs?.items?.length) {
+    setters.setSupplierCatalogs(payload.supplierCatalogs);
+  }
+  if (payload.productOverrides !== undefined) {
+    setters.setProductOverrides(payload.productOverrides);
+  }
 
   if (payload.settings != null) {
     setters.setSettings(mergeUnitSettings(payload.settings));
@@ -180,21 +214,22 @@ function applyWorkspacePayload(payload, setters) {
     setters.setTeamAccess(normalizeTeamAccess(payload.teamAccess));
   }
 
-  if (payload.cache == null) {
-    setters.setBaseRows([]);
-    setters.setSyncedAt('');
-    setters.setMeta({});
-    setters.setWbProductCache(null);
-  } else if (payload.cache?.rows?.length) {
-    setters.setBaseRows(slimRowsForCache(payload.cache.rows));
+  const cloudRows = payload.cache?.rows;
+  if (cloudRows?.length) {
+    setters.setBaseRows(slimRowsForCache(cloudRows));
     setters.setSyncedAt(payload.cache.syncedAt || '');
     setters.setMeta(payload.cache.meta || {});
     if (payload.cache.wbProductCache?.products?.length) {
       setters.setWbProductCache(payload.cache.wbProductCache);
     } else {
-      const bootstrapped = buildEffectiveWbCache(null, payload.cache.rows, payload.cache.syncedAt);
+      const bootstrapped = buildEffectiveWbCache(null, cloudRows, payload.cache.syncedAt);
       setters.setWbProductCache(bootstrapped);
     }
+  } else if (!keepRows?.length && payload.cache === null) {
+    setters.setBaseRows([]);
+    setters.setSyncedAt('');
+    setters.setMeta({});
+    setters.setWbProductCache(null);
   }
 }
 
@@ -211,14 +246,17 @@ function SectionAccessDenied({ title, onBack }) {
 }
 
 export default function App() {
-  const bootPayload = BOOT.cache?.payload;
+  const [boot] = useState(() => readBootCache());
+  const bootPayload = boot.cache?.payload;
+  const bootHadRows = useRef(Boolean(bootPayload?.cache?.rows?.length));
 
-  const [team, setTeam] = useState(BOOT.team);
-  const [teamName, setTeamName] = useState(BOOT.cache?.teamName || '');
+  const [team, setTeam] = useState(boot.team);
+  const [teamName, setTeamName] = useState(boot.cache?.teamName || '');
   const [ownerClientId, setOwnerClientId] = useState(bootPayload?.ownerClientId ?? null);
-  const [workspaceUpdatedAt, setWorkspaceUpdatedAt] = useState(BOOT.cache?.updatedAt || '');
+  const [workspaceUpdatedAt, setWorkspaceUpdatedAt] = useState(boot.cache?.updatedAt || '');
   const [cloudStatus, setCloudStatus] = useState('');
-  const [cloudSyncing, setCloudSyncing] = useState(Boolean(BOOT.team));
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudRefreshing, setCloudRefreshing] = useState(false);
 
   useEffect(() => {
     if (!cloudStatus) return undefined;
@@ -226,14 +264,22 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [cloudStatus]);
 
-  const [profiles, setProfiles] = useState(() => bootPayload?.profiles ?? loadProfiles());
-  const [activeProfileId, setActiveProfileId] = useState(
-    () => bootPayload?.activeProfileId ?? loadActiveProfileId()
-  );
-  const [purchases, setPurchases] = useState(() => bootPayload?.purchases ?? loadPurchases());
-  const [supplierCatalogs, setSupplierCatalogs] = useState(
-    () => bootPayload?.supplierCatalogs ?? loadSupplierCatalogs()
-  );
+  const [profiles, setProfiles] = useState(() => bootProfiles(bootPayload));
+  const [activeProfileId, setActiveProfileId] = useState(() => {
+    const initialProfiles = bootProfiles(bootPayload);
+    return bootActiveProfileId(bootPayload, initialProfiles);
+  });
+  const [purchases, setPurchases] = useState(() => {
+    const team = bootPayload?.purchases;
+    const local = loadPurchases();
+    return team && Object.keys(team).length ? { ...local, ...team } : local;
+  });
+  const [supplierCatalogs, setSupplierCatalogs] = useState(() => {
+    const team = bootPayload?.supplierCatalogs;
+    const local = loadSupplierCatalogs();
+    if (team?.items?.length) return team;
+    return local?.items?.length ? local : team ?? local;
+  });
   const [productOverrides, setProductOverrides] = useState(
     () => bootPayload?.productOverrides ?? loadProductOverrides()
   );
@@ -275,11 +321,11 @@ export default function App() {
   const [syncSteps, setSyncSteps] = useState(null);
   const [syncStartedAt, setSyncStartedAt] = useState(null);
   const [syncPartialReady, setSyncPartialReady] = useState(false);
-  const [syncTick, setSyncTick] = useState(0);
   const [syncHint, setSyncHint] = useState('');
   const [error, setError] = useState('');
   const [detailRow, setDetailRow] = useState(null);
   const [marginFilter, setMarginFilter] = useState(null);
+  const [brandFilter, setBrandFilter] = useState([]);
   const [highlightNmId, setHighlightNmId] = useState(null);
   const [dashboardQuery, setDashboardQuery] = useState('');
 
@@ -287,6 +333,10 @@ export default function App() {
   const syncRunId = useRef(0);
   const autoSyncStarted = useRef(false);
   const persistTimer = useRef(null);
+  const baseRowsRef = useRef(baseRows);
+  baseRowsRef.current = baseRows;
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
 
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeProfileId) || profiles[0],
@@ -321,7 +371,7 @@ export default function App() {
     [team, teamAccess, isTeamCreator]
   );
 
-  const canSyncWb = !team || myPermissions.data;
+  const canSyncWb = !team || myPermissions.data || myPermissions.calc;
 
   const changeSection = useCallback(
     (id) => {
@@ -421,21 +471,30 @@ export default function App() {
     const data = await fetchWorkspace(teamCode);
     const unchanged = Boolean(ifUnchangedSince && data.updatedAt === ifUnchangedSince);
     if (!unchanged) {
-      applyWorkspacePayload(data.payload, {
-        setOwnerClientId,
-        setTeamAccess,
-        setProfiles,
-        setActiveProfileId,
-        setPurchases,
-        setSettings,
-        setSettingsUpdatedAt,
-        setSupplierCatalogs,
-        setProductOverrides,
-        setBaseRows,
-        setSyncedAt,
-        setMeta,
-        setWbProductCache,
-      });
+      const hadLocalRows = baseRowsRef.current.length > 0;
+      const cloudEmpty = !data.payload?.cache?.rows?.length;
+      applyWorkspacePayload(
+        data.payload,
+        {
+          setOwnerClientId,
+          setTeamAccess,
+          setProfiles,
+          setActiveProfileId,
+          setPurchases,
+          setSettings,
+          setSettingsUpdatedAt,
+          setSupplierCatalogs,
+          setProductOverrides,
+          setBaseRows,
+          setSyncedAt,
+          setMeta,
+          setWbProductCache,
+        },
+        { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current }
+      );
+      if (hadLocalRows && cloudEmpty) {
+        setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
+      }
       setWorkspaceUpdatedAt(data.updatedAt || '');
       saveWorkspaceSnapshot(teamCode, data);
     }
@@ -445,7 +504,7 @@ export default function App() {
   const loadTeamWorkspace = useCallback(async (teamCode) => {
     const normalized = String(teamCode || '').trim().toUpperCase();
     const data = await refreshTeamWorkspace(normalized, {
-      ifUnchangedSince: workspaceUpdatedAt || BOOT.cache?.updatedAt || '',
+      ifUnchangedSince: workspaceUpdatedAt || boot.cache?.updatedAt || '',
     });
     if (data.teamCode !== normalized) {
       throw new Error(`Ожидалась команда ${normalized}, получена ${data.teamCode}`);
@@ -466,28 +525,37 @@ export default function App() {
   }, [refreshTeamWorkspace, workspaceUpdatedAt]);
 
   useEffect(() => {
-    if (!team || cloudSyncing) return undefined;
+    if (!team || cloudSyncing || loading || enriching) return undefined;
 
     async function pullRemote() {
       if (skipCloudSave.current) return;
       try {
         const data = await fetchWorkspace(team);
         if (!data.updatedAt || data.updatedAt === workspaceUpdatedAt) return;
-        applyWorkspacePayload(data.payload, {
-          setOwnerClientId,
-          setTeamAccess,
-          setProfiles,
-          setActiveProfileId,
-          setPurchases,
-          setSettings,
-          setSettingsUpdatedAt,
-          setSupplierCatalogs,
-          setProductOverrides,
-          setBaseRows,
-          setSyncedAt,
-          setMeta,
-          setWbProductCache,
-        });
+        const hadLocalRows = baseRowsRef.current.length > 0;
+        const cloudEmpty = !data.payload?.cache?.rows?.length;
+        applyWorkspacePayload(
+          data.payload,
+          {
+            setOwnerClientId,
+            setTeamAccess,
+            setProfiles,
+            setActiveProfileId,
+            setPurchases,
+            setSettings,
+            setSettingsUpdatedAt,
+            setSupplierCatalogs,
+            setProductOverrides,
+            setBaseRows,
+            setSyncedAt,
+            setMeta,
+            setWbProductCache,
+          },
+          { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current }
+        );
+        if (hadLocalRows && cloudEmpty) {
+          setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
+        }
         setWorkspaceUpdatedAt(data.updatedAt);
         saveWorkspaceSnapshot(team, data);
       } catch {
@@ -502,13 +570,41 @@ export default function App() {
       window.removeEventListener('focus', onFocus);
       clearInterval(timer);
     };
-  }, [team, cloudSyncing, workspaceUpdatedAt]);
+  }, [team, cloudSyncing, loading, enriching, workspaceUpdatedAt]);
+
+  useEffect(() => {
+    if (profiles.length) return;
+    const localProfiles = loadProfiles();
+    if (!localProfiles.length) return;
+    setProfiles(localProfiles);
+    setActiveProfileId(bootActiveProfileId({}, localProfiles));
+    setCloudStatus('API-ключ восстановлен из локального хранилища браузера');
+  }, []);
 
   useEffect(() => {
     async function syncCloud() {
       const candidate = getTeamFromUrl() || loadStoredTeam();
       if (!candidate) {
         skipCloudSave.current = false;
+        return;
+      }
+
+      setTeam(candidate);
+
+      if (bootPayload?.cache?.rows?.length) {
+        skipCloudSave.current = false;
+        setCloudRefreshing(true);
+        try {
+          await refreshTeamWorkspace(candidate, {
+            ifUnchangedSince: boot.cache?.updatedAt || workspaceUpdatedAt || '',
+          });
+        } catch (err) {
+          if (!err.needsTeam) {
+            setCloudStatus('Облако недоступно — показаны локальные данные');
+          }
+        } finally {
+          setCloudRefreshing(false);
+        }
         return;
       }
 
@@ -520,7 +616,7 @@ export default function App() {
         if (!err.needsTeam) {
           setError(err.message);
         }
-        if (!BOOT.cache?.payload) {
+        if (!bootPayload?.cache) {
           setCloudStatus('Не удалось загрузить облако — показаны локальные данные');
         }
         skipCloudSave.current = false;
@@ -540,8 +636,7 @@ export default function App() {
       saveSettings(settings);
       saveSupplierCatalogs(supplierCatalogs);
       saveProductOverrides(productOverrides);
-      saveWbProductCache(wbProductCache);
-    }, 400);
+    }, 1200);
     return () => {
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
@@ -552,16 +647,27 @@ export default function App() {
     settings,
     supplierCatalogs,
     productOverrides,
-    wbProductCache,
   ]);
 
   useEffect(() => {
-    if (!team) return undefined;
+    if (loading || enriching || !wbProductCache?.products?.length) return undefined;
+    const timer = setTimeout(() => saveWbProductCache(wbProductCache), 2500);
+    return () => clearTimeout(timer);
+  }, [loading, enriching, wbProductCache]);
+
+  useEffect(() => {
+    if (!team || loading || enriching || cloudSyncing) return undefined;
     const timer = setTimeout(() => {
       pushToCloud().catch((err) => setCloudStatus(`Ошибка сохранения: ${err.message}`));
-    }, 2500);
+    }, 3500);
     return () => clearTimeout(timer);
-  }, [team, pushToCloud]);
+  }, [
+    team,
+    loading,
+    enriching,
+    cloudSyncing,
+    pushToCloud,
+  ]);
 
   const applySyncResult = useCallback(
     (data) => {
@@ -594,16 +700,36 @@ export default function App() {
           data.cardsDeltaCount > 0 ? ` · карточек ±${data.cardsDeltaCount}` : '';
         setCloudStatus(`${modeLabel} синхронизация · ${data.total} товаров${delta}`);
       }
-      setMeta((prev) => ({
-        ...prev,
-        globalAcquiringRate: data.globalAcquiringRate ?? prev.globalAcquiringRate,
-        globalAdvertisingDrr: data.globalAdvertisingDrr ?? prev.globalAdvertisingDrr,
-        totalAdSpend: data.totalAdSpend ?? prev.totalAdSpend,
-        advertPeriod: data.advertPeriod ?? prev.advertPeriod,
-        advertError: data.advertError ?? prev.advertError,
-        advertByNmId: data.advertByNmId ?? prev.advertByNmId,
-        advertByVendor: data.advertByVendor ?? prev.advertByVendor,
-        realizationPeriod: data.realizationPeriod ?? prev.realizationPeriod,
+      setMeta((prev) => {
+        const advertPatch = data.advertSynced
+          ? {
+              globalAdvertisingDrr: data.globalAdvertisingDrr ?? null,
+              totalAdSpend: data.totalAdSpend ?? 0,
+              advertPeriod: data.advertPeriod ?? null,
+              advertError: data.advertError ?? null,
+              advertByNmId: data.advertByNmId ?? null,
+              advertByVendor: data.advertByVendor ?? null,
+              advertCampaigns: data.advertCampaigns ?? 0,
+              advertCampaignsTotal: data.advertCampaignsTotal ?? data.advertCampaigns ?? 0,
+              advertCampaignsFetched: data.advertCampaignsFetched ?? data.advertCampaigns ?? 0,
+            }
+          : {
+              globalAdvertisingDrr: data.globalAdvertisingDrr ?? prev.globalAdvertisingDrr,
+              totalAdSpend: data.totalAdSpend ?? prev.totalAdSpend,
+              advertPeriod: data.advertPeriod ?? prev.advertPeriod,
+              advertError: data.advertError ?? prev.advertError,
+              advertByNmId: data.advertByNmId ?? prev.advertByNmId,
+              advertByVendor: data.advertByVendor ?? prev.advertByVendor,
+              advertCampaigns: data.advertCampaigns ?? prev.advertCampaigns,
+              advertCampaignsTotal: data.advertCampaignsTotal ?? prev.advertCampaignsTotal,
+              advertCampaignsFetched: data.advertCampaignsFetched ?? prev.advertCampaignsFetched,
+            };
+
+        return {
+          ...prev,
+          ...advertPatch,
+          globalAcquiringRate: data.globalAcquiringRate ?? prev.globalAcquiringRate,
+          realizationPeriod: data.realizationPeriod ?? prev.realizationPeriod,
         realizationError: data.realizationError ?? prev.realizationError,
         realizationFinanceWarning: data.realizationFinanceWarning ?? prev.realizationFinanceWarning,
         realizationVendorSales: data.realizationVendorSales ?? prev.realizationVendorSales,
@@ -636,11 +762,30 @@ export default function App() {
         fbsShipmentOrders: data.fbsShipmentOrders ?? prev.fbsShipmentOrders,
         fbsShipmentTotal: data.fbsShipmentTotal ?? prev.fbsShipmentTotal,
         fbsShipmentError: data.fbsShipmentError ?? prev.fbsShipmentError,
+        regionSalesPeriod: data.regionSalesSynced
+          ? data.regionSalesPeriod ?? prev.regionSalesPeriod
+          : prev.regionSalesPeriod,
+        regionSalesError: data.regionSalesSynced
+          ? data.regionSalesError ?? prev.regionSalesError
+          : prev.regionSalesError,
+        regionSalesSource: data.regionSalesSynced
+          ? data.regionSalesSource ?? prev.regionSalesSource
+          : prev.regionSalesSource,
+        regionSalesRawRows: data.regionSalesSynced
+          ? data.regionSalesRawRows ?? prev.regionSalesRawRows
+          : prev.regionSalesRawRows,
+        regionSalesSnapshot: data.regionSalesSynced
+          ? data.regionSalesSnapshot ?? prev.regionSalesSnapshot
+          : prev.regionSalesSnapshot,
+        regionSalesTotalQty: data.regionSalesSynced
+          ? data.regionSalesTotalQty ?? prev.regionSalesTotalQty
+          : prev.regionSalesTotalQty,
         supplierMeta: data.supplierMeta ?? prev.supplierMeta,
         syncMode: data.syncMode ?? prev.syncMode,
         fullCatalogAt: data.fullCatalogAt ?? prev.fullCatalogAt,
         cardsDeltaCount: data.cardsDeltaCount ?? prev.cardsDeltaCount,
-      }));
+        };
+      });
       if (!activeCatalog?.byDigitKey && data.supplierPurchases && Object.keys(data.supplierPurchases).length > 0) {
         setPurchases((prev) => {
           const next = { ...prev };
@@ -676,10 +821,35 @@ export default function App() {
       let steps = createSyncSteps();
       setSyncSteps(steps);
 
-      const setStep = (id, patch) => {
+      let lastSyncUiAt = 0;
+      let pendingHint = '';
+      let pendingStep = null;
+      const flushSyncUi = (force = false) => {
+        const now = Date.now();
+        if (!force && now - lastSyncUiAt < 400) return;
+        lastSyncUiAt = now;
+        if (pendingHint) {
+          setSyncHint(pendingHint);
+          pendingHint = '';
+        }
+        if (pendingStep) {
+          const { id, patch } = pendingStep;
+          steps = patchSyncStep(steps, id, patch);
+          setSyncSteps([...steps]);
+          pendingStep = null;
+        }
+      };
+
+      const setStep = (id, patch, { force = false } = {}) => {
         if (isStale()) return;
-        steps = patchSyncStep(steps, id, patch);
-        setSyncSteps([...steps]);
+        pendingStep = { id, patch };
+        flushSyncUi(force);
+      };
+
+      const setHint = (hint, { force = false } = {}) => {
+        if (isStale()) return;
+        pendingHint = hint;
+        flushSyncUi(force);
       };
 
       let cache = buildEffectiveWbCache(wbProductCache, baseRows, syncedAt);
@@ -689,11 +859,11 @@ export default function App() {
 
       try {
         if (needsCatalog) {
-          setStep('catalog', { status: 'running', detail: 'Запрос карточек…' });
+          setStep('catalog', { status: 'running', detail: 'Запрос карточек…' }, { force: true });
           let cursor = null;
           do {
             if (isStale()) return;
-            setSyncHint(
+            setHint(
               cursor
                 ? `Каталог WB… ${cache?.products?.length || 0} товаров`
                 : 'Каталог WB, страница 1…'
@@ -722,17 +892,18 @@ export default function App() {
               }`,
             });
           } while (cursor);
+          flushSyncUi(true);
           setStep('catalog', {
             status: 'done',
             detail: `${cache.products?.length || 0} карточек`,
-          });
+          }, { force: true });
         } else {
-          setStep('catalog', { status: 'done', detail: 'Из кэша' });
+          setStep('catalog', { status: 'done', detail: 'Из кэша' }, { force: true });
         }
 
         if (needsBootstrap) {
-          setStep('bootstrap', { status: 'running', detail: 'Цены и тарифы WB…' });
-          setSyncHint('Цены и тарифы…');
+          setStep('bootstrap', { status: 'running', detail: 'Цены и тарифы WB…' }, { force: true });
+          setHint('Цены и тарифы…', { force: true });
           const bootstrap = await syncFromWb({
             token: activeProfile.token,
             purchases,
@@ -754,16 +925,16 @@ export default function App() {
           setStep('bootstrap', {
             status: 'done',
             detail: `${bootstrap.total || bootstrap.rows?.length || 0} товаров в таблице`,
-          });
+          }, { force: true });
           setLoading(false);
-          setSyncHint('');
+          setHint('', { force: true });
         } else {
-          setStep('bootstrap', { status: 'done', detail: 'Уже загружено' });
+          setStep('bootstrap', { status: 'done', detail: 'Уже загружено' }, { force: true });
         }
 
         setEnriching(true);
-        setStep('realization', { status: 'running', detail: 'Еженедельный отчёт WB…' });
-        setSyncHint('Отчёт реализации…');
+        setStep('realization', { status: 'running', detail: 'Еженедельный отчёт WB…' }, { force: true });
+        setHint('Отчёт реализации…', { force: true });
         const realizationData = await syncFromWb({
           token: activeProfile.token,
           purchases,
@@ -797,11 +968,11 @@ export default function App() {
               ? 'error'
               : 'done',
           detail: realizationDetail,
-        });
-        setSyncHint('');
+        }, { force: true });
+        setHint('', { force: true });
 
-        setStep('enrich', { status: 'running', detail: 'Остатки, заказы, реклама…' });
-        setSyncHint('Остатки и реклама…');
+        setStep('enrich', { status: 'running', detail: 'Остатки, заказы, реклама…' }, { force: true });
+        setHint('Остатки и реклама…', { force: true });
         const data = await syncFromWb({
           token: activeProfile.token,
           purchases,
@@ -816,21 +987,29 @@ export default function App() {
         const enrichDetail = [
           data.realizationPeriod ? 'отчёт' : null,
           data.ordersWithData ? 'заказы' : null,
-          data.advertError ? null : data.totalAdSpend != null ? 'реклама' : null,
+          data.advertError
+            ? 'реклама: ошибка'
+            : data.advertSynced && data.totalAdSpend > 0
+              ? `реклама ${Math.round(data.totalAdSpend).toLocaleString('ru-RU')} ₽`
+              : data.advertSynced && data.advertCampaignsTotal > 0
+                ? `реклама: ${data.advertCampaignsTotal} камп.`
+                : data.advertSynced
+                  ? 'реклама: 0'
+                  : null,
         ]
           .filter(Boolean)
           .join(', ');
         setStep('enrich', {
           status: 'done',
           detail: enrichDetail || `${data.total} товаров обновлено`,
-        });
+        }, { force: true });
       } catch (err) {
         if (isStale()) return;
         const failedStep = steps.find((s) => s.status === 'running')?.id || 'enrich';
         setStep(failedStep, {
           status: 'error',
           detail: err.message || 'Ошибка загрузки',
-        });
+        }, { force: true });
         if (partialReady || baseRows.length > 0) {
           setCloudStatus(`Частичная загрузка: ${err.message}. Нажмите «Быстро» для повтора.`);
         } else {
@@ -838,9 +1017,10 @@ export default function App() {
         }
       } finally {
         if (!isStale()) {
+          flushSyncUi(true);
           setLoading(false);
           setEnriching(false);
-          setSyncHint('');
+          setHint('', { force: true });
         }
       }
     },
@@ -858,6 +1038,8 @@ export default function App() {
   useEffect(() => {
     if (cloudSyncing || autoSyncStarted.current || loading || enriching || !activeProfile?.token) return;
     if (!baseRows.length) return;
+    // F5 с локальным кэшем — не запускаем полную синхронизацию WB автоматически
+    if (bootHadRows.current) return;
 
     const reportSalesCount = baseRows.filter((row) => Number(row.reportSales) > 0).length;
     const needsReport =
@@ -882,12 +1064,6 @@ export default function App() {
 
   const syncActive = loading || enriching;
   const showSyncProgress = Boolean(syncSteps?.length && (syncActive || syncSteps.some((s) => s.status === 'error')));
-
-  useEffect(() => {
-    if (!showSyncProgress) return undefined;
-    const timer = setInterval(() => setSyncTick((value) => value + 1), 1000);
-    return () => clearInterval(timer);
-  }, [showSyncProgress]);
 
   useEffect(() => {
     if (!syncSteps?.length) return undefined;
@@ -1123,7 +1299,7 @@ export default function App() {
             ) : null}
             {meta.syncMode === 'full' ? 'Полная' : meta.syncMode === 'bootstrap' ? 'Первая' : 'Быстрая'} синхронизация:{' '}
             {new Date(syncedAt).toLocaleString('ru-RU')}
-            {cloudSyncing ? ' · облако…' : ''}
+            {cloudSyncing ? ' · облако…' : cloudRefreshing ? ' · обновление…' : ''}
             {enriching ? ' · догружаем отчёты…' : ''}
             {activeProfile ? ` · кабинет ${activeProfile.name}` : ''}
             {meta.fullCatalogAt ? (
@@ -1142,7 +1318,7 @@ export default function App() {
                 {' · '}
               </>
             ) : null}
-            {cloudSyncing ? 'Обновляем облако… · ' : ''}
+            {cloudSyncing ? 'Обновляем облако… · ' : cloudRefreshing ? 'Сверяем облако… · ' : ''}
             Загрузите данные с WB или прайс поставщика — таблица расчётов появится ниже.
           </span>
         )
@@ -1153,13 +1329,20 @@ export default function App() {
           {error}
         </div>
       ) : null}
+      {meta?.advertError ? (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 lg:px-6">
+          {meta.advertError}
+          {isAdvertRateLimitMessage(meta.advertError)
+            ? ' Данные рекламы не перезаписываем — повторите «Быстро» через 1–2 мин.'
+            : ' — колонка ДРР может быть пустой. Проверьте категорию «Продвижение» в токене WB.'}
+        </div>
+      ) : null}
       {showSyncProgress ? (
         <div className="mb-4">
           <SyncProgressPanel
             steps={syncSteps}
             startedAt={syncStartedAt}
             partialReady={syncPartialReady}
-            tick={syncTick}
           />
         </div>
       ) : null}
@@ -1191,6 +1374,8 @@ export default function App() {
                 meta={meta}
                 marginFilter={marginFilter}
                 onMarginFilter={setMarginFilter}
+                brandFilter={brandFilter}
+                onBrandFilter={setBrandFilter}
                 onOpenLogistics={() => changeSection('logistics')}
                 onSelectRow={(row) => {
                   setMarginFilter('attention');
@@ -1208,6 +1393,8 @@ export default function App() {
                 onRowClick={setDetailRow}
                 marginFilter={marginFilter}
                 onMarginFilterClear={() => setMarginFilter(null)}
+                brandFilter={brandFilter}
+                onBrandFilterChange={setBrandFilter}
                 highlightNmId={highlightNmId}
                 onHighlightConsumed={() => setHighlightNmId(null)}
                 dashboardQuery={dashboardQuery}
@@ -1218,17 +1405,40 @@ export default function App() {
             <section className="panel py-12 text-center">
               <p className="text-sm font-medium text-slate-700">Нет данных для расчёта</p>
               <p className="mt-2 text-sm text-slate-500">
-                Перейдите в раздел «Данные», добавьте API-ключ и нажмите «Обновить с WB».
+                {activeProfile?.token
+                  ? 'Нажмите «Быстро» в шапке — подтянем товары с WB (нужен токен с доступом к Content и Prices).'
+                  : 'Перейдите в раздел «Данные», добавьте API-ключ и нажмите «Обновить с WB».'}
               </p>
-              <button type="button" className="btn-primary mt-4" onClick={() => changeSection('data')}>
-                Перейти к данным
-              </button>
+              {activeProfile?.token && canSyncWb ? (
+                <button type="button" className="btn-primary mt-4" disabled={syncActive} onClick={handleSync}>
+                  {loading ? syncHint || 'Загрузка…' : enriching ? 'Догрузка…' : 'Быстро — загрузить с WB'}
+                </button>
+              ) : canAccessSection('data', myPermissions) || !team ? (
+                <button type="button" className="btn-primary mt-4" onClick={() => changeSection('data')}>
+                  Перейти к данным
+                </button>
+              ) : (
+                <p className="mt-4 text-xs text-slate-500">
+                  Попросите создателя команды добавить API-ключ или выдать доступ к разделу «Данные».
+                </p>
+              )}
             </section>
           )}
         </div>
         ) : (
           <SectionAccessDenied
             title="Раздел «Расчёты» недоступен"
+            onBack={() => changeSection(firstAllowedSection(myPermissions))}
+          />
+        )
+      ) : null}
+
+      {section === 'regions' ? (
+        canAccessSection('regions', myPermissions) || !team ? (
+          <RegionsPanel rows={rows} meta={meta} />
+        ) : (
+          <SectionAccessDenied
+            title="Раздел «Регионы» недоступен"
             onBack={() => changeSection(firstAllowedSection(myPermissions))}
           />
         )

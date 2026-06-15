@@ -103,7 +103,10 @@ export default function TeamPermissionsPanel({
 
       <section className="panel">
         <h3 className="text-sm font-semibold text-slate-800">Права по умолчанию для новых участников</h3>
-        <p className="mt-1 text-xs text-slate-500">Применяются, пока вы не настроите участника отдельно.</p>
+        <p className="mt-1 text-xs text-slate-500">
+          Новые участники видят те же разделы, что и вы, если не ограничить доступ. «Данные» — синхронизация WB,
+          «Факт P&L» — отчёт и ДРР.
+        </p>
         <div className="mt-4">
           <PermGrid permissions={access.memberDefaults} onChange={updateDefaults} />
         </div>

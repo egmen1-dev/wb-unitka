@@ -1,4 +1,4 @@
-export const APP_SECTIONS = ['calc', 'logistics', 'pnl', 'data', 'team', 'admin', 'settings'];
+export const APP_SECTIONS = ['calc', 'regions', 'logistics', 'pnl', 'data', 'team', 'admin', 'settings'];
 
 const SECTION_KEY = 'wb-unit-calc:section';
 
