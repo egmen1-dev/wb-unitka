@@ -58,6 +58,12 @@ import {
   hydrateTariffCache,
   serializeTariffCache,
 } from '../../lib/wb-tariff-cache.js';
+import {
+  classifyWbCargoType,
+  filterTariffsForCargoType,
+  resolveMatrixCargoType,
+  warehouseAcceptsCargoType,
+} from '../../lib/wb-cargo-type.js';
 
 async function resolveTariffs(wbCache) {
   const hydrated = hydrateTariffCache(wbCache?.tariffCache);
@@ -83,19 +89,29 @@ function resolveProductTariffs({
   wbOfficesById,
   tariffByName,
   defaultTariff,
+  cargoType,
 }) {
-  const fboPrimary = pickPrimaryFboWarehouse(fboStockDetail);
-  const fboTariff = lookupWarehouseTariff(tariffByName, fboPrimary?.name, defaultTariff);
+  const fboPrimary = pickPrimaryFboWarehouse(fboStockDetail, { cargoType });
+  let fboTariff = lookupWarehouseTariff(tariffByName, fboPrimary?.name, defaultTariff);
+  if (fboPrimary?.name && !warehouseAcceptsCargoType(fboPrimary.name, cargoType)) {
+    fboTariff = defaultTariff;
+  }
 
   const fbsOfficeName =
     fbsOfficeNameOverride ||
     resolveOfficeName(wbOfficesById, resolveSellerOfficeId(fbsSellerWarehouse));
-  const fbsTariff = lookupFbsTariff({
+  let fbsTariff = lookupFbsTariff({
     tariffByName,
     defaultTariff,
     officeName: fbsOfficeName,
     sellerWarehouseName: fbsSellerWarehouse?.name,
   });
+  if (
+    (fbsOfficeName && !warehouseAcceptsCargoType(fbsOfficeName, cargoType)) ||
+    (fbsSellerWarehouse?.name && !warehouseAcceptsCargoType(fbsSellerWarehouse.name, cargoType))
+  ) {
+    fbsTariff = defaultTariff;
+  }
 
   // Тариф 46/14 ₽ — из настроек (как в таблице). Со склада WB — только коэффициент и хранение.
   return {
@@ -248,6 +264,10 @@ function buildProduct(staticInfo, dims, ctx) {
     wbOfficesById: ctx.wbOffices.byId,
     tariffByName: ctx.tariffByName,
     defaultTariff: ctx.defaultTariff,
+    cargoType:
+      staticInfo.cargoType ||
+      dims.cargoType ||
+      classifyWbCargoType({ ...staticInfo, ...dims }),
   });
 
   return {
@@ -257,6 +277,10 @@ function buildProduct(staticInfo, dims, ctx) {
     title: staticInfo.title,
     subjectId: staticInfo.subjectId,
     subjectName: staticInfo.subjectName || commission.subjectName || '',
+    cargoType:
+      staticInfo.cargoType ||
+      dims.cargoType ||
+      classifyWbCargoType({ ...staticInfo, ...dims }),
     skus: staticInfo.skus || [],
     stockFbo: fboStockDetail.total ?? staticInfo.stockFbo ?? 0,
     stockFbs: fbsStock.stock ?? staticInfo.stockFbs ?? 0,
@@ -626,9 +650,12 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       .filter((p) => p.salePrice > 0);
 
     const catalogNmIds = new Set(products.map((p) => Number(p.nmId)).filter(Boolean));
+    const matrixCargoType = resolveMatrixCargoType(products);
+    const mgtTariffList = filterTariffsForCargoType([...tariffByName.values()], matrixCargoType);
     let regionDemand = buildRegionDemandSnapshot(regionSalesResult.report, {
       catalogNmIds,
-      tariffList: [...tariffByName.values()],
+      tariffList: mgtTariffList,
+      cargoType: matrixCargoType,
     });
     if (
       regionDemand.totalQty === 0 &&
@@ -637,7 +664,8 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
     ) {
       regionDemand = buildRegionDemandSnapshot(regionSalesResult.report, {
         catalogNmIds: null,
-        tariffList: [...tariffByName.values()],
+        tariffList: mgtTariffList,
+        cargoType: matrixCargoType,
       });
     }
 
@@ -695,6 +723,8 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       ordersError: ordersResult.error || null,
       tariffsWarehouseCount: tariffByName.size,
       tariffsDefaultWarehouse: defaultTariff?.warehouseName || boxTariffs.warehouseName || '',
+      matrixCargoType,
+      tariffSource: boxTariffs.tariffSource || 'tariffs/box',
       fbsShipmentWarehouse: primaryFbsShipment.officeName || '',
       fbsShipmentSource: primaryFbsShipment.source,
       fbsShipmentOrders: primaryFbsShipment.orderCount,
