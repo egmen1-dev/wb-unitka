@@ -35,7 +35,18 @@ npm run dev:unit
 
 **https://wb-unitka.vercel.app**
 
-Деплой (отдельный проект Vercel `wb-unitka`):
+### Автодеплой (рекомендуется)
+
+1. Закоммитьте и запушьте в `main` или `feature/wb-unit-calc`
+2. Один раз добавьте секреты GitHub — см. [`.github/DEPLOY-WB-UNITKA.md`](../.github/DEPLOY-WB-UNITKA.md)
+
+### Ручной деплой
+
+```bash
+npm run deploy:unit
+```
+
+Или по шагам:
 
 ```bash
 vercel link --project wb-unitka

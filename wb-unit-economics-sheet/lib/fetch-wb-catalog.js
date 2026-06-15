@@ -33,6 +33,11 @@ import {
   resolvePrimaryFbsShipmentContext,
 } from '../../lib/wb-fbs-warehouse-stats.js';
 import {
+  buildRegionDemandSnapshot,
+  fetchRegionSalesReport,
+  serializeRegionDemandSnapshot,
+} from '../../lib/wb-region-sales.js';
+import {
   lookupFbsTariff,
   lookupWarehouseTariff,
   pickPrimaryFboWarehouse,
@@ -376,7 +381,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
           : 4,
     deliveryPages: 0,
     includeAdvert: !isBootstrap && !realizationOnly,
-    advertMaxCampaignChunks: mode === 'full' ? undefined : 2,
+    advertMaxCampaignChunks: mode === 'full' ? 6 : 2,
     fbsWarehouses: isBootstrap || realizationOnly ? 'skip' : 'primary',
     cardDeltaPages: cardsFresh || isBootstrap || realizationOnly ? 0 : 1,
     maxMissingCards: cardsFresh || isBootstrap || realizationOnly ? 0 : mode === 'full' ? 200 : 50,
@@ -420,6 +425,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       ordersResult,
       realization,
       fbsShipmentStats,
+      regionSalesResult,
     ] = await Promise.all([
       fetchAllPrices(),
       fetchWarehouses().catch(() => []),
@@ -452,6 +458,15 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
             totalOrders: 0,
             periodDays: 30,
             error: err.message || 'Нет доступа к сборочным заданиям FBS',
+          })),
+      isBootstrap || realizationOnly
+        ? Promise.resolve({ period: null, report: [], rowCount: 0, error: null })
+        : fetchRegionSalesReport(token, { days: 30 }).catch((err) => ({
+            period: null,
+            report: [],
+            rowCount: 0,
+            source: null,
+            error: err.message || 'Не удалось загрузить географию заказов',
           })),
     ]);
 
@@ -580,6 +595,12 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       .map(({ staticInfo, dims }) => buildProduct(staticInfo, dims, productCtx))
       .filter((p) => p.salePrice > 0);
 
+    const catalogNmIds = new Set(products.map((p) => Number(p.nmId)).filter(Boolean));
+    const regionDemand = buildRegionDemandSnapshot(regionSalesResult.report, {
+      catalogNmIds,
+      tariffList: [...tariffByName.values()],
+    });
+
     const realizationOverlap = computeRealizationCatalogOverlap(products, realization);
     const advertLookup = serializeAdvertLookup(advertStats.byNmId, products);
     const now = new Date().toISOString();
@@ -600,7 +621,10 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       totalAdSpend: advertStats.totalAdSpend,
       advertPeriod: advertStats.period,
       advertCampaigns: advertStats.campaigns,
+      advertCampaignsTotal: advertStats.campaignsTotal ?? advertStats.campaigns ?? 0,
+      advertCampaignsFetched: advertStats.campaignsFetched ?? advertStats.campaigns ?? 0,
       advertError: advertStats.error || null,
+      advertSynced: profile.includeAdvert,
       advertByNmId: advertLookup.byNmId,
       advertByVendor: advertLookup.byVendor,
       realizationPeriod: realization.period,
@@ -636,6 +660,13 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       fbsShipmentOrders: primaryFbsShipment.orderCount,
       fbsShipmentTotal: fbsShipmentStats.totalOrders,
       fbsShipmentError: fbsShipmentStats.error || null,
+      regionSalesPeriod: regionSalesResult.period,
+      regionSalesError: regionSalesResult.error || null,
+      regionSalesSource: regionSalesResult.source || null,
+      regionSalesRawRows: regionSalesResult.rowCount ?? 0,
+      regionSalesSynced: !isBootstrap && !realizationOnly,
+      regionSalesSnapshot: serializeRegionDemandSnapshot(regionDemand),
+      regionSalesTotalQty: regionDemand.totalQty,
       tariffCache,
       products,
     };

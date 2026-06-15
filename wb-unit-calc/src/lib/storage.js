@@ -79,19 +79,52 @@ export function loadWbProductCache() {
 }
 
 export function saveWbProductCache(cache) {
-  if (cache?.products?.length) writeJson(KEYS.wbProductCache, cache);
-  else localStorage.removeItem(KEYS.wbProductCache);
+  if (!cache?.products?.length) {
+    localStorage.removeItem(KEYS.wbProductCache);
+    return;
+  }
+  const run = () => {
+    try {
+      writeJson(KEYS.wbProductCache, cache);
+    } catch {
+      // quota exceeded — не блокируем UI
+    }
+  };
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(run, { timeout: 8000 });
+  } else {
+    setTimeout(run, 0);
+  }
 }
-
 export function createProfileId() {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/** Локальный boot-кэш без тяжёлого wbProductCache (восстанавливается из rows). */
+function slimPayloadForLocalCache(payload) {
+  if (!payload) return payload;
+  const cache = payload.cache;
+  if (!cache) return payload;
+  return {
+    ...payload,
+    cache: {
+      rows: cache.rows,
+      meta: cache.meta,
+      syncedAt: cache.syncedAt,
+    },
+  };
 }
 
 /** Локальный снимок облака команды — мгновенный старт после F5. */
 export function loadWorkspaceCache(teamCode) {
   const code = String(teamCode || '').trim().toUpperCase();
   if (!code) return null;
-  return readJson(workspaceCacheKey(code), null);
+  const raw = readJson(workspaceCacheKey(code), null);
+  if (!raw?.payload) return raw;
+  return {
+    ...raw,
+    payload: slimPayloadForLocalCache(raw.payload),
+  };
 }
 
 export function saveWorkspaceCache(teamCode, snapshot) {
@@ -99,7 +132,7 @@ export function saveWorkspaceCache(teamCode, snapshot) {
   if (!code || !snapshot?.payload) return;
   try {
     writeJson(workspaceCacheKey(code), {
-      payload: snapshot.payload,
+      payload: slimPayloadForLocalCache(snapshot.payload),
       updatedAt: snapshot.updatedAt || '',
       teamName: snapshot.teamName || '',
       savedAt: new Date().toISOString(),

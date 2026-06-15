@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { fmtMoney, fmtPct, profitClass } from '../lib/format';
 import { buildLogisticsReconciliation } from '@lib/logistics-compare.js';
 import { primaryMargin, primaryProfit, resolveScheme, schemeLabel } from '@lib/unit-scheme.js';
+import { collectBrandOptions, filterRowsByBrand } from '../lib/brand-filter';
 import {
   MARGIN_BUCKETS,
   buildMarginBucketStats,
@@ -9,13 +10,26 @@ import {
   topRiskRows,
 } from '../lib/margin-insights';
 
-export default function SummaryDashboard({ rows, settings, meta, marginFilter, onMarginFilter, onSelectRow, onOpenLogistics }) {
+export default function SummaryDashboard({
+  rows,
+  settings,
+  meta,
+  marginFilter,
+  onMarginFilter,
+  brandFilter = [],
+  onBrandFilter,
+  onSelectRow,
+  onOpenLogistics,
+}) {
   const [open, setOpen] = useState(true);
   const scheme = resolveScheme(settings);
   const label = schemeLabel(scheme);
 
+  const visibleRows = useMemo(() => filterRowsByBrand(rows, brandFilter), [rows, brandFilter]);
+  const brandOptions = useMemo(() => collectBrandOptions(rows), [rows]);
+
   const stats = useMemo(() => {
-    const withData = rows.filter((r) => r.salePrice > 0 && primaryProfit(r, scheme) != null);
+    const withData = visibleRows.filter((r) => r.salePrice > 0 && primaryProfit(r, scheme) != null);
     const withPurchase = withData.filter((r) => r.purchasePrice > 0);
     const profitable = withPurchase.filter((r) => primaryProfit(r, scheme) > 0);
     const unprofitable = withPurchase.filter((r) => primaryProfit(r, scheme) < 0);
@@ -29,13 +43,13 @@ export default function SummaryDashboard({ rows, settings, meta, marginFilter, o
         ? withPurchase.reduce((s, r) => s + primaryMargin(r, scheme), 0) / withPurchase.length
         : null;
 
-    const missingPurchase = rows.filter((r) => !r.purchasePrice).length;
-    const bucketStats = buildMarginBucketStats(rows, scheme);
-    const risks = topRiskRows(rows, 8, scheme);
-    const logisticsBrief = buildLogisticsReconciliation(rows, settings);
+    const missingPurchase = visibleRows.filter((r) => !r.purchasePrice).length;
+    const bucketStats = buildMarginBucketStats(visibleRows, scheme);
+    const risks = topRiskRows(visibleRows, 8, scheme);
+    const logisticsBrief = buildLogisticsReconciliation(visibleRows, settings);
 
     return {
-      total: rows.length,
+      total: visibleRows.length,
       withPurchase: withPurchase.length,
       profitable: profitable.length,
       unprofitable: unprofitable.length,
@@ -47,12 +61,18 @@ export default function SummaryDashboard({ rows, settings, meta, marginFilter, o
       risks,
       logisticsBrief,
     };
-  }, [rows, settings, scheme]);
+  }, [visibleRows, settings, scheme]);
 
   if (!rows.length) return null;
 
   function handleBucketClick(bucketId) {
     onMarginFilter?.(marginFilter === bucketId ? null : bucketId);
+  }
+
+  function handleBrandClick(name) {
+    if (!onBrandFilter) return;
+    const selected = brandFilter || [];
+    onBrandFilter(selected.includes(name) ? selected.filter((item) => item !== name) : [...selected, name]);
   }
 
   return (
@@ -77,6 +97,11 @@ export default function SummaryDashboard({ rows, settings, meta, marginFilter, o
           ) : null}
           {stats.missingPurchase > 0 ? (
             <span className="text-amber-700">без закупки: {stats.missingPurchase}</span>
+          ) : null}
+          {brandFilter.length ? (
+            <span className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-800 ring-1 ring-brand-200">
+              бренд: {brandFilter.length === 1 ? brandFilter[0] : `${brandFilter.length} шт.`}
+            </span>
           ) : null}
           {stats.logisticsBrief.withActual > 0 ? (
             <button
@@ -115,6 +140,46 @@ export default function SummaryDashboard({ rows, settings, meta, marginFilter, o
               </div>
             ))}
           </div>
+
+          {brandOptions.length > 1 ? (
+            <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-800">Бренды</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">Клик — фильтр в таблице и сводке</p>
+                </div>
+                {brandFilter.length ? (
+                  <button
+                    type="button"
+                    className="text-xs text-brand-700 underline"
+                    onClick={() => onBrandFilter?.([])}
+                  >
+                    Сбросить
+                  </button>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {brandOptions.map((opt) => {
+                  const active = brandFilter.includes(opt.name);
+                  return (
+                    <button
+                      key={opt.name}
+                      type="button"
+                      className={`rounded-full px-3 py-1 text-xs transition ${
+                        active
+                          ? 'bg-brand-600 text-white ring-2 ring-brand-300'
+                          : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:ring-brand-200'
+                      }`}
+                      onClick={() => handleBrandClick(opt.name)}
+                    >
+                      {opt.name}
+                      <span className={active ? 'text-brand-100' : 'text-slate-400'}> · {opt.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-4">

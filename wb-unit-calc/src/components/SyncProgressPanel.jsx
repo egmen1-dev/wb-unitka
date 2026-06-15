@@ -1,6 +1,7 @@
+import { useEffect, useState } from 'react';
+
 function StepIcon({ status }) {
-  if (status === 'done') {
-    return (
+  if (status === 'done') {    return (
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -33,9 +34,16 @@ function formatElapsed(ms) {
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 }
 
-export default function SyncProgressPanel({ steps, startedAt, partialReady = false, tick = 0 }) {
+export default function SyncProgressPanel({ steps, startedAt, partialReady = false }) {
+  const [, setClock] = useState(0);
+
+  useEffect(() => {
+    if (!steps?.length || !startedAt) return undefined;
+    const timer = setInterval(() => setClock((value) => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, [steps, startedAt]);
+
   if (!steps?.length) return null;
-  void tick;
 
   const elapsed = startedAt ? formatElapsed(Date.now() - startedAt) : null;
   const running = steps.find((s) => s.status === 'running');

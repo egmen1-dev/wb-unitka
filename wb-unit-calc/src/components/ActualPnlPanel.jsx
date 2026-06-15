@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { buildFactualPnlReport } from '@lib/factual-pnl.js';
+import { isAdvertRateLimitMessage } from '@lib/wb-advert-stats.js';
 import { fmtMoney, fmtNum, fmtPct, marginClass, profitClass } from '../lib/format';
 
 const FILTERS = [
@@ -308,13 +309,25 @@ export default function ActualPnlPanel({ rows, settings, meta, syncActive = fals
             </p>
             {meta?.advertError ? (
               <p className="mt-2 text-sm text-amber-900">
-                {meta.advertError} — колонка ДРР может быть пустой. Добавьте категорию{' '}
-                <strong>Продвижение</strong> в токен WB или задайте «ДРР по умолчанию» в настройках.
+                {meta.advertError}
+                {isAdvertRateLimitMessage(meta.advertError) ? (
+                  <> Подождите 1–2 мин и нажмите «Быстро» — это лимит WB, не ошибка токена.</>
+                ) : (
+                  <>
+                    {' '}
+                    — колонка ДРР может быть пустой. Добавьте категорию <strong>Продвижение</strong> в
+                    токен WB или задайте «ДРР по умолчанию» в настройках.
+                  </>
+                )}
               </p>
             ) : report.totals.withDrrCount === 0 && settings.includeAdvertising !== false ? (
               <p className="mt-2 text-sm text-amber-900">
-                Нет данных рекламы — нажмите «Быстро» (нужен токен с категорией{' '}
-                <strong>Продвижение</strong>) или задайте «ДРР по умолчанию» в настройках.
+                Нет данных рекламы — дождитесь шага «Остатки, заказы, реклама…» и нажмите «Быстро»
+                (нужен токен с категорией <strong>Продвижение</strong>) или задайте «ДРР по умолчанию» в
+                настройках.
+                {meta?.advertCampaignsTotal > 0 && meta?.totalAdSpend === 0
+                  ? ` Кампаний в кабинете: ${meta.advertCampaignsTotal}, но расход за 30 д не подтянулся — попробуйте «Полностью».`
+                  : ''}
                 {meta?.totalAdSpend > 0
                   ? ` В кабинете реклама ${fmtMoney(meta.totalAdSpend)} — после синхронизации распределим по артикулам.`
                   : ''}

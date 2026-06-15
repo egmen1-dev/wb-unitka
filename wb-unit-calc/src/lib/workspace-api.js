@@ -41,6 +41,8 @@ async function readJson(response) {
   }
 }
 
+const WORKSPACE_FETCH_MS = 12000;
+
 export async function fetchWorkspace(team) {
   const code = String(team || '').trim();
   if (!code) {
@@ -52,7 +54,19 @@ export async function fetchWorkspace(team) {
   const url = new URL(apiUrl('/api/unit-calc/workspace'), STORAGE_API_BASE || window.location.origin);
   url.searchParams.set('team', code);
 
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), WORKSPACE_FETCH_MS);
+  let response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Облако не ответило за 12 с — показаны локальные данные');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
   const data = await readJson(response);
   if (!response.ok) {
     const error = new Error(data.error || `Ошибка ${response.status}`);

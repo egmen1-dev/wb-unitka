@@ -16,7 +16,8 @@
     "sync:unit:json": "node wb-unit-economics-sheet/scripts/sync-wb.mjs --json",
     "sync:supplier": "python3 wb-unit-economics-sheet/scripts/sync-supplier-prices.py",
     "dev:unit": "node wb-unit-calc/scripts/start-dev.mjs",
-    "build:unit": "vite build --config wb-unit-calc/vite.config.js"
+    "build:unit": "vite build --config wb-unit-calc/vite.config.js",
+    "deploy:unit": "vercel deploy --prod --local-config vercel.unit.json"
   },
   "dependencies": {
     "@vercel/postgres": "^0.10.0",
