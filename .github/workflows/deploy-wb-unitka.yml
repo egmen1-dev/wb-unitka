@@ -29,3 +29,5 @@ jobs:
         run: npx vercel@54.11.1 deploy --prod --yes --local-config vercel.unit.json --token "$VERCEL_TOKEN"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_GIT_COMMIT_SHA: ${{ github.sha }}
+          GITHUB_SHA: ${{ github.sha }}

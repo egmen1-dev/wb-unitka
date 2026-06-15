@@ -1,4 +1,5 @@
 import Logo from './Logo';
+import { APP_BUILD } from '../lib/app-build';
 import { canAccessSection } from '@lib/team-permissions.js';
 
 const NAV = [
@@ -98,6 +99,12 @@ export default function AppShell({
         <div className="mx-auto flex max-w-[1680px] flex-wrap items-center justify-between gap-4 px-4 py-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-6">
             <Logo />
+            <span
+              className="hidden rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-medium text-brand-100 lg:inline"
+              title="Номер сборки на сервере. Если у вас другой — обновите страницу (Cmd+Shift+R)."
+            >
+              v{APP_BUILD}
+            </span>
             <nav className="hidden items-center gap-1 md:flex" aria-label="Разделы">
               {navItems.map((item) => (
                 <button
