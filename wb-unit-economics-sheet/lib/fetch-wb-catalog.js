@@ -202,21 +202,33 @@ async function reconcileCatalogWithSeller(mergedCache, pricesByNmId, realization
 }
 
 function buildProduct(staticInfo, dims, ctx) {
-  const resolvedNmId = resolveReportNmId(ctx.realization, staticInfo.nmId, staticInfo.vendorCode);
-  const nmId = resolvedNmId || Number(staticInfo.nmId) || 0;
-  const goods = ctx.pricesByNmId.get(nmId) ?? ctx.pricesByNmId.get(staticInfo.nmId);
+  const catalogNmId = Number(staticInfo.nmId) || 0;
+  const reportNmId = resolveReportNmId(ctx.realization, catalogNmId, staticInfo.vendorCode);
+  const nmId = catalogNmId || reportNmId;
+  const goods =
+    ctx.pricesByNmId.get(catalogNmId) ??
+    (reportNmId !== catalogNmId ? ctx.pricesByNmId.get(reportNmId) : undefined);
   const { price: ourPrice, oldPrice } = extractPriceFromGoods(goods);
   const basePrice = oldPrice || ourPrice;
   const salePrice = ourPrice || oldPrice;
-  const fboStockDetail = ctx.fboStocksDetailed.get(nmId) || { total: 0, warehouses: [] };
+  const fboStockDetail =
+    ctx.fboStocksDetailed.get(catalogNmId) ||
+    ctx.fboStocksDetailed.get(reportNmId) ||
+    { total: 0, warehouses: [] };
   const commission = ctx.commissionsBySubject.get(staticInfo.subjectId) || {
     fboCategory: 0.245,
     fbsCategory: 0.28,
   };
-  const actual = lookupRealizationStat(ctx.realization, nmId, staticInfo.vendorCode);
-  const advert = ctx.advertStats.byNmId.get(nmId) || ctx.advertStats.byNmId.get(Number(staticInfo.nmId)) || {};
+  const actual = lookupRealizationStat(ctx.realization, catalogNmId, staticInfo.vendorCode);
+  const advert =
+    ctx.advertStats.byNmId.get(catalogNmId) ||
+    (reportNmId !== catalogNmId ? ctx.advertStats.byNmId.get(reportNmId) : undefined) ||
+    {};
   const deliveryHours =
-    ctx.deliveryStats.byNmId.get(nmId) ?? ctx.deliveryStats.sellerAvgDeliveryHours ?? null;
+    ctx.deliveryStats.byNmId.get(catalogNmId) ??
+    (reportNmId !== catalogNmId ? ctx.deliveryStats.byNmId.get(reportNmId) : undefined) ??
+    ctx.deliveryStats.sellerAvgDeliveryHours ??
+    null;
 
   const fbsStock = ctx.skipFbsStockFetch
     ? { stock: staticInfo.stockFbs ?? 0, sellerWarehouse: ctx.primarySellerWarehouse || null }
@@ -249,7 +261,10 @@ function buildProduct(staticInfo, dims, ctx) {
     stockFbs: fbsStock.stock ?? staticInfo.stockFbs ?? 0,
     fboWarehouseName: warehouseTariffs.fboWarehouseName,
     fbsWarehouseName: warehouseTariffs.fbsWarehouseName,
-    orders7d: ctx.ordersResult.byNmId.get(nmId) ?? 0,
+    orders7d:
+      ctx.ordersResult.byNmId.get(catalogNmId) ??
+      (reportNmId !== catalogNmId ? ctx.ordersResult.byNmId.get(reportNmId) : undefined) ??
+      0,
     salePrice,
     basePrice,
     ourPrice: ourPrice || salePrice,
