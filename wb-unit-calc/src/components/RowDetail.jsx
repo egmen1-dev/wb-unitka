@@ -63,6 +63,12 @@ export default function RowDetail({ row, onClose }) {
               {fmtMoney(row.logisticsFbs)}
               <span className="block text-xs font-normal text-slate-500">
                 база {fmtMoney(row.fbsBaseDelivery)}
+                {row.logisticsIndicesApplied && row.localizationIndex != null && row.localizationIndex !== 1
+                  ? ` · ИЛ ×${Number(row.localizationIndex).toFixed(2)}`
+                  : ''}
+                {row.logisticsIndicesApplied && row.logisticsIrpSurcharge > 0
+                  ? ` · ИРП +${fmtMoney(row.logisticsIrpSurcharge)}`
+                  : ''}
                 {row.fbsCoeff ? ` · коэфф. ×${Number(row.fbsCoeff).toFixed(2)}` : ''}
                 {row.fbsWarehouseName ? ` · ${row.fbsWarehouseName}` : ''}
                 {row.actualLogisticsRub > 0 ? ` · факт ${fmtMoney(row.actualLogisticsRub)}` : ''}

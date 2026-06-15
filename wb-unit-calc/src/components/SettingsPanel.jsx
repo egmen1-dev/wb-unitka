@@ -32,6 +32,18 @@ const NUMBER_FIELDS = [
   { key: 'fbsCommissionMarkup', label: 'FBS: +к FBO, %', step: 0.1, hint: 'По умолчанию 3,5 п.п.' },
   { key: 'returnLogisticsMarkup', label: 'Наценка возврата, %', step: 0.01 },
   { key: 'defaultWarehouseCoeff', label: 'Коэфф. склада FBO', step: 0.1 },
+  {
+    key: 'localizationIndex',
+    label: 'Индекс локализации (ИЛ)',
+    step: 0.01,
+    hint: 'Из кабинета WB → Тарифы складов. 1 = без изменений, 0,9 = −10% к литровой части',
+  },
+  {
+    key: 'salesDistributionIndex',
+    label: 'ИРП, % от цены',
+    step: 0.01,
+    hint: 'Индекс распределения продаж. 0 при локализации ≥60%. Вводите как %: 1,05 = 1,05%',
+  },
   { key: 'storageBasePerLiter', label: 'Хранение: база ₽/л/сут', step: 0.01 },
   { key: 'storageAdditionalPerLiter', label: 'Хранение: доп. литр', step: 0.01 },
   { key: 'storageCoeff', label: 'Коэфф. хранения', step: 0.1 },
@@ -41,6 +53,7 @@ const NUMBER_FIELDS = [
 ];
 
 const BOOL_FIELDS = [
+  { key: 'includeLogisticsIndices', label: 'ИЛ и ИРП в расчётной логистике' },
   { key: 'useBuyoutWeightedLogistics', label: 'Логистика с учётом % выкупа' },
   { key: 'preferActualRates', label: 'Факт из отчётов WB (эквайринг, логистика…)' },
   { key: 'includeAcquiring', label: 'Учитывать эквайринг' },

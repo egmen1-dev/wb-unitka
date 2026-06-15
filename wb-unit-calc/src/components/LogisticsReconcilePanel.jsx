@@ -99,6 +99,12 @@ function FormulaBreakdown({ row, cmp }) {
           ) : null}
         </p>
         <p className="mt-0.5 text-slate-500">Тариф: {tier}</p>
+        {cmp.localizationIndex != null && cmp.localizationIndex !== 1 ? (
+          <p className="mt-0.5 text-slate-500">ИЛ ×{fmtNum(cmp.localizationIndex, 2)}</p>
+        ) : null}
+        {cmp.logisticsIrpSurcharge > 0 ? (
+          <p className="mt-0.5 text-slate-500">ИРП +{fmtMoney(cmp.logisticsIrpSurcharge)} к прямой</p>
+        ) : null}
       </div>
       <div>
         <p className="font-semibold text-slate-800">Обратная + выкуп</p>

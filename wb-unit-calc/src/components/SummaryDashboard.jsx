@@ -380,6 +380,20 @@ function SummaryDashboard({
             {meta?.sellerAvgDeliveryHours
               ? ` · ср. доставка ${Number(meta.sellerAvgDeliveryHours).toFixed(1)} ч`
               : ''}
+            {settings.includeLogisticsIndices !== false ? (
+              <>
+                {' · ИЛ '}
+                <span className="font-medium text-slate-700">
+                  ×{Number(settings.localizationIndex ?? 1).toFixed(2)}
+                </span>
+                {' · ИРП '}
+                <span className="font-medium text-slate-700">
+                  {((settings.salesDistributionIndex ?? 0) * 100).toFixed(2)}%
+                </span>
+              </>
+            ) : (
+              ' · ИЛ/ИРП выкл.'
+            )}
             {meta?.fbsShipmentWarehouse ? (
               <>
                 {' · '}
