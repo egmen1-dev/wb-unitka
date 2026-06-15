@@ -36,13 +36,13 @@ const NUMBER_FIELDS = [
     key: 'localizationIndex',
     label: 'Индекс локализации (ИЛ)',
     step: 0.01,
-    hint: 'Из кабинета WB → Тарифы складов. 1 = без изменений, 0,9 = −10% к литровой части',
+    hint: 'Из кабинета WB → Тарифы складов. При авто-синке обновляется из заказов API',
   },
   {
     key: 'salesDistributionIndex',
     label: 'ИРП, % от цены',
     step: 0.01,
-    hint: 'Индекс распределения продаж. 0 при локализации ≥60%. Вводите как %: 1,05 = 1,05%',
+    hint: 'При авто-синке считается по заказам за 90 дней. 0 при локализации ≥60%',
   },
   { key: 'storageBasePerLiter', label: 'Хранение: база ₽/л/сут', step: 0.01 },
   { key: 'storageAdditionalPerLiter', label: 'Хранение: доп. литр', step: 0.01 },
@@ -53,6 +53,7 @@ const NUMBER_FIELDS = [
 ];
 
 const BOOL_FIELDS = [
+  { key: 'autoSyncLogisticsIndices', label: 'Авто ИЛ/ИРП при синхронизации' },
   { key: 'includeLogisticsIndices', label: 'ИЛ и ИРП в расчётной логистике' },
   { key: 'useBuyoutWeightedLogistics', label: 'Логистика с учётом % выкупа' },
   { key: 'preferActualRates', label: 'Факт из отчётов WB (эквайринг, логистика…)' },

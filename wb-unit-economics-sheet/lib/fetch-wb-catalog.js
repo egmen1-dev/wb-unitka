@@ -37,6 +37,7 @@ import {
   fetchRegionSalesReport,
   serializeRegionDemandSnapshot,
 } from '../../lib/wb-region-sales.js';
+import { fetchSellerLogisticsIndices } from '../../lib/wb-seller-logistics-indices.js';
 import {
   lookupFbsTariff,
   lookupWarehouseTariff,
@@ -441,6 +442,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       realization,
       fbsShipmentStats,
       regionSalesResult,
+      logisticsIndices,
     ] = await Promise.all([
       fetchAllPrices(),
       fetchWarehouses().catch(() => []),
@@ -483,6 +485,19 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
             source: null,
             error: err.message || 'Не удалось загрузить географию заказов',
           })),
+      isBootstrap
+        ? Promise.resolve({
+            localizationIndex: null,
+            salesDistributionIndex: null,
+            totalOrders: 0,
+            error: null,
+            source: null,
+          })
+        : fetchSellerLogisticsIndices(token, {
+            days: 90,
+            maxPages: profile.ordersPages > 0 ? Math.max(profile.ordersPages, 20) : 30,
+            tariffByName: boxTariffs.byName || new Map(),
+          }),
     ]);
 
     let mergedCache = wbCache?.products || [];
@@ -682,6 +697,16 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       regionSalesSynced: !isBootstrap && !realizationOnly,
       regionSalesSnapshot: serializeRegionDemandSnapshot(regionDemand),
       regionSalesTotalQty: regionDemand.totalQty,
+      localizationIndex: logisticsIndices?.localizationIndex ?? null,
+      salesDistributionIndex: logisticsIndices?.salesDistributionIndex ?? null,
+      localizationIndexSource: logisticsIndices?.source ?? null,
+      salesDistributionIndexSource: logisticsIndices?.source ?? null,
+      logisticsIndicesComputedAt: logisticsIndices?.computedAt ?? null,
+      logisticsIndicesPeriodDays: logisticsIndices?.periodDays ?? null,
+      logisticsIndicesOrderCount: logisticsIndices?.totalOrders ?? 0,
+      logisticsIndicesSkuCount: logisticsIndices?.skuCount ?? 0,
+      avgLocalizationSharePct: logisticsIndices?.avgLocalizationSharePct ?? null,
+      logisticsIndicesError: logisticsIndices?.error ?? null,
       tariffCache,
       products,
     };

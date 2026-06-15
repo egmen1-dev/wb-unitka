@@ -390,6 +390,24 @@ function SummaryDashboard({
                 <span className="font-medium text-slate-700">
                   {((settings.salesDistributionIndex ?? 0) * 100).toFixed(2)}%
                 </span>
+                {meta?.localizationIndexSource === 'orders-estimate' ? (
+                  <span className="text-slate-500">
+                    {' '}
+                    (оценка по {meta.logisticsIndicesOrderCount || 0} заказам
+                    {meta.logisticsIndicesComputedAt
+                      ? `, ${new Intl.DateTimeFormat('ru-RU', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        }).format(new Date(meta.logisticsIndicesComputedAt))}`
+                      : ''}
+                    )
+                  </span>
+                ) : null}
+                {meta?.logisticsIndicesError ? (
+                  <span className="text-amber-700"> · {meta.logisticsIndicesError}</span>
+                ) : null}
               </>
             ) : (
               ' · ИЛ/ИРП выкл.'

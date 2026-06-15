@@ -773,8 +773,29 @@ export default function App() {
         syncMode: data.syncMode ?? prev.syncMode,
         fullCatalogAt: data.fullCatalogAt ?? prev.fullCatalogAt,
         cardsDeltaCount: data.cardsDeltaCount ?? prev.cardsDeltaCount,
+        localizationIndex: data.localizationIndex ?? prev.localizationIndex,
+        salesDistributionIndex: data.salesDistributionIndex ?? prev.salesDistributionIndex,
+        localizationIndexSource: data.localizationIndexSource ?? prev.localizationIndexSource,
+        salesDistributionIndexSource:
+          data.salesDistributionIndexSource ?? prev.salesDistributionIndexSource,
+        logisticsIndicesComputedAt: data.logisticsIndicesComputedAt ?? prev.logisticsIndicesComputedAt,
+        logisticsIndicesPeriodDays: data.logisticsIndicesPeriodDays ?? prev.logisticsIndicesPeriodDays,
+        logisticsIndicesOrderCount: data.logisticsIndicesOrderCount ?? prev.logisticsIndicesOrderCount,
+        logisticsIndicesSkuCount: data.logisticsIndicesSkuCount ?? prev.logisticsIndicesSkuCount,
+        logisticsIndicesError: data.logisticsIndicesError ?? prev.logisticsIndicesError,
+        avgLocalizationSharePct: data.avgLocalizationSharePct ?? prev.avgLocalizationSharePct,
         };
       });
+      if (data.localizationIndex != null) {
+        setSettings((prev) => {
+          if (prev.autoSyncLogisticsIndices === false) return prev;
+          return mergeUnitSettings({
+            ...prev,
+            localizationIndex: data.localizationIndex,
+            salesDistributionIndex: data.salesDistributionIndex ?? 0,
+          });
+        });
+      }
       if (!activeCatalog?.byDigitKey && data.supplierPurchases && Object.keys(data.supplierPurchases).length > 0) {
         setPurchases((prev) => {
           const next = { ...prev };
