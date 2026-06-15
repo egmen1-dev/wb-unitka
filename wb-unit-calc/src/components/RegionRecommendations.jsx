@@ -133,9 +133,17 @@ export default function RegionRecommendations({ plan }) {
               Куда везти товар с учётом коэфф. складов, ИЛ и ИРП
             </h2>
             <p className="mt-2 text-sm text-brand-100/90">
-              Сравниваем не только тариф склада, но и надбавки WB за нелокальные продажи. Иногда
-              дешевле улучшить ИЛ/ИРП, чем грузить на склад с высоким коэффициентом.
+              Сравниваем не только тариф склада, но и надбавки WB за нелокальные продажи. Тарифы
+              складов — МГТ (короб), как на{' '}
+              <span className="underline decoration-brand-200/60">странице delivery WB</span>.
+              Склады СГТ для вашей матрицы не предлагаем.
             </p>
+            {plan.cargoTypeLabel ? (
+              <p className="mt-2 inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white">
+                Тип матрицы: {plan.cargoTypeLabel}
+                {plan.hasTariffs ? ' · тарифы WB' : ' · оценка по справочнику'}
+              </p>
+            ) : null}
           </div>
           {indices.targetSavingsPerUnit > 0 ? (
             <div className="rounded-2xl bg-white/10 px-4 py-3 backdrop-blur">
