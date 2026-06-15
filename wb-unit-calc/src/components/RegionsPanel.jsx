@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
+import { buildRegionSupplyRecommendations } from '@lib/region-supply-recommendations.js';
 import { fmtMoney, fmtNum, fmtPct } from '../lib/format';
 import { regionEmptyMessage, regionSourceLabel } from '../lib/region-empty-message';
+import RegionRecommendations from './RegionRecommendations';
 
 const VIEWS = [
   { id: 'region', label: 'Регионы' },
@@ -31,7 +33,7 @@ function ShareBar({ sharePct }) {
   );
 }
 
-export default function RegionsPanel({ rows = [], meta = {} }) {
+export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tariffCache = null }) {
   const [view, setView] = useState('region');
   const [query, setQuery] = useState('');
 
@@ -40,6 +42,26 @@ export default function RegionsPanel({ rows = [], meta = {} }) {
     : '30 дней';
 
   const snapshot = meta?.regionSalesSnapshot || null;
+
+  const supplyPlan = useMemo(
+    () =>
+      buildRegionSupplyRecommendations({
+        snapshot,
+        rows,
+        settings,
+        meta,
+        tariffCache,
+      }),
+    [snapshot, rows, settings, meta, tariffCache]
+  );
+
+  const actionByRegion = useMemo(() => {
+    const map = new Map();
+    for (const action of supplyPlan.actions || []) {
+      map.set(action.regionLabel, action);
+    }
+    return map;
+  }, [supplyPlan.actions]);
 
   const titleByNmId = useMemo(() => {
     const map = new Map();
@@ -78,7 +100,7 @@ export default function RegionsPanel({ rows = [], meta = {} }) {
   }, [list, query]);
 
   const topRegion = snapshot?.byRegion?.[0];
-  const topWarehouse = snapshot?.warehouses?.[0];
+  const topAction = supplyPlan.actions?.[0];
 
   if (!snapshot?.totalQty) {
     const hint = regionEmptyMessage(meta, rows.length);
@@ -103,10 +125,12 @@ export default function RegionsPanel({ rows = [], meta = {} }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="panel border-brand-100 bg-gradient-to-br from-brand-50/40 via-white to-white">
+      <RegionRecommendations plan={supplyPlan} />
+
+      <section className="panel border-slate-200">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-brand-700">Спрос по географии</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Спрос по географии</p>
             <h2 className="mt-1 text-lg font-semibold text-slate-800">Куда уходят заказы покупателей</h2>
             <p className="mt-1 text-sm text-slate-500">
               Период: {periodLabel} · источник: {regionSourceLabel(meta?.regionSalesSource)}
@@ -124,24 +148,15 @@ export default function RegionsPanel({ rows = [], meta = {} }) {
             sub={topRegion ? `${fmtNum(topRegion.qty, 0)} шт. · ${fmtPct(topRegion.sharePct)}` : undefined}
           />
           <Kpi
-            label="Склад для поставки"
-            value={topWarehouse?.warehouseName || topRegion?.suggestedWarehouses?.[0] || '—'}
+            label="Приоритет поставки"
+            value={topAction?.warehouseName || topRegion?.suggestedWarehouses?.[0] || '—'}
             sub={
-              topWarehouse
-                ? `~${fmtNum(topWarehouse.qty, 0)} шт. спроса · ${fmtPct(topWarehouse.sharePct)}`
-                : 'Оценка по регионам спроса'
+              topAction
+                ? `коэфф. ${topAction.warehouseCoeff?.toFixed(2)} · ${fmtMoney(topAction.costPerUnit)}/ед.`
+                : 'См. рекомендации выше'
             }
           />
         </div>
-
-        {topRegion?.suggestedWarehouses?.length ? (
-          <div className="mt-4 rounded-lg border border-sky-100 bg-sky-50/70 px-4 py-3 text-sm text-sky-900">
-            <span className="font-medium">Рекомендация:</span> для региона «{topRegion.label}» чаще всего логичны
-            поставки на склады{' '}
-            <span className="font-semibold">{topRegion.suggestedWarehouses.join(', ')}</span>. Сверяйте с остатками FBO
-            и тарифами в разделе «Расчёты».
-          </div>
-        ) : null}
       </section>
 
       <section className="panel overflow-hidden p-0">
@@ -183,7 +198,8 @@ export default function RegionsPanel({ rows = [], meta = {} }) {
                 {view === 'city' ? <th className="px-4 py-2 font-medium">Регион</th> : null}
                 {view === 'region' ? <th className="px-4 py-2 font-medium">Округ</th> : null}
                 {view === 'warehouse' ? <th className="px-4 py-2 font-medium">Регионы спроса</th> : null}
-                {view === 'region' ? <th className="px-4 py-2 font-medium">Склады WB</th> : null}
+                {view === 'region' ? <th className="px-4 py-2 font-medium">Рекомендация</th> : null}
+                {view === 'region' ? <th className="px-4 py-2 font-medium">₽/ед.</th> : null}
                 <th className="px-4 py-2 font-medium">Заказы</th>
                 <th className="px-4 py-2 font-medium">Доля</th>
                 <th className="px-4 py-2 font-medium">Retail</th>
@@ -191,31 +207,53 @@ export default function RegionsPanel({ rows = [], meta = {} }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((item, index) => (
-                <tr key={`${item.key || item.label}-${index}`} className="border-t border-slate-100 hover:bg-brand-50/40">
-                  <td className="px-4 py-2 text-slate-400">{index + 1}</td>
-                  <td className="px-4 py-2 font-medium text-slate-800">{item.label || item.warehouseName}</td>
-                  {view === 'city' ? <td className="px-4 py-2 text-slate-600">{item.regionName || '—'}</td> : null}
-                  {view === 'region' ? <td className="px-4 py-2 text-slate-600">{item.foName || '—'}</td> : null}
-                  {view === 'warehouse' ? (
-                    <td className="px-4 py-2 text-slate-600">{(item.regions || []).join(', ') || '—'}</td>
-                  ) : null}
-                  {view === 'region' ? (
-                    <td className="px-4 py-2 text-slate-600">
-                      {(item.suggestedWarehouses || []).join(', ') || '—'}
+              {filtered.map((item, index) => {
+                const action = view === 'region' ? actionByRegion.get(item.label) : null;
+                return (
+                  <tr
+                    key={`${item.key || item.label}-${index}`}
+                    className="border-t border-slate-100 hover:bg-brand-50/40"
+                  >
+                    <td className="px-4 py-2 text-slate-400">{index + 1}</td>
+                    <td className="px-4 py-2 font-medium text-slate-800">{item.label || item.warehouseName}</td>
+                    {view === 'city' ? (
+                      <td className="px-4 py-2 text-slate-600">{item.regionName || '—'}</td>
+                    ) : null}
+                    {view === 'region' ? (
+                      <td className="px-4 py-2 text-slate-600">{item.foName || '—'}</td>
+                    ) : null}
+                    {view === 'warehouse' ? (
+                      <td className="px-4 py-2 text-slate-600">{(item.regions || []).join(', ') || '—'}</td>
+                    ) : null}
+                    {view === 'region' ? (
+                      <td className="px-4 py-2 text-slate-700">
+                        {action ? (
+                          <span className="font-medium text-brand-700">{action.warehouseName}</span>
+                        ) : (
+                          (item.suggestedWarehouses || []).slice(0, 2).join(', ') || '—'
+                        )}
+                        {action?.warehouseCoeff ? (
+                          <span className="ml-1 text-slate-400">×{action.warehouseCoeff.toFixed(2)}</span>
+                        ) : null}
+                      </td>
+                    ) : null}
+                    {view === 'region' ? (
+                      <td className="px-4 py-2 tabular-nums text-slate-700">
+                        {action?.costPerUnit != null ? fmtMoney(action.costPerUnit) : '—'}
+                      </td>
+                    ) : null}
+                    <td className="px-4 py-2 tabular-nums text-slate-700">{fmtNum(item.qty, 0)}</td>
+                    <td className="px-4 py-2">
+                      <ShareBar sharePct={item.sharePct} />
                     </td>
-                  ) : null}
-                  <td className="px-4 py-2 tabular-nums text-slate-700">{fmtNum(item.qty, 0)}</td>
-                  <td className="px-4 py-2">
-                    <ShareBar sharePct={item.sharePct} />
-                  </td>
-                  <td className="px-4 py-2 tabular-nums text-slate-700">{fmtMoney(item.revenue)}</td>
-                  <td className="px-4 py-2 text-slate-500">{item.skuCount ?? '—'}</td>
-                </tr>
-              ))}
+                    <td className="px-4 py-2 tabular-nums text-slate-700">{fmtMoney(item.revenue)}</td>
+                    <td className="px-4 py-2 text-slate-500">{item.skuCount ?? '—'}</td>
+                  </tr>
+                );
+              })}
               {!filtered.length ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={11} className="px-4 py-8 text-center text-slate-400">
                     Ничего не найдено
                   </td>
                 </tr>

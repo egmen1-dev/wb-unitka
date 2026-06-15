@@ -1456,7 +1456,12 @@ export default function App() {
 
       {section === 'regions' ? (
         canAccessSection('regions', myPermissions) || !team ? (
-          <RegionsPanel rows={rows} meta={meta} />
+          <RegionsPanel
+            rows={rows}
+            meta={meta}
+            settings={settings}
+            tariffCache={wbProductCache?.tariffCache || null}
+          />
         ) : (
           <SectionAccessDenied
             title="Раздел «Регионы» недоступен"
