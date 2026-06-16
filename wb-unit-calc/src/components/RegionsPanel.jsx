@@ -1,5 +1,10 @@
 import { useMemo, useState } from 'react';
-import { buildRegionSupplyRecommendations, formatWarehouseCoeffPercent } from '@lib/region-supply-recommendations.js';
+import {
+  buildRegionSupplyRecommendations,
+  formatWarehouseCoeffPercent,
+  resolveRegionTariffContext,
+} from '@lib/region-supply-recommendations.js';
+import { enrichRegionDemandSnapshot } from '@lib/wb-region-sales.js';
 import { fmtMoney, fmtNum, fmtPct } from '../lib/format';
 import { regionEmptyMessage, regionSourceLabel } from '../lib/region-empty-message';
 import RegionRecommendations from './RegionRecommendations';
@@ -34,14 +39,26 @@ function ShareBar({ sharePct }) {
 }
 
 export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tariffCache = null }) {
-  const [view, setView] = useState('region');
+  const [view, setView] = useState('warehouse');
   const [query, setQuery] = useState('');
 
   const periodLabel = meta?.regionSalesPeriod
     ? `${meta.regionSalesPeriod.dateFrom} — ${meta.regionSalesPeriod.dateTo}`
     : '30 дней';
 
-  const snapshot = meta?.regionSalesSnapshot || null;
+  const tariffCtx = useMemo(
+    () => resolveRegionTariffContext(tariffCache, rows, settings),
+    [tariffCache, rows, settings]
+  );
+
+  const snapshot = useMemo(
+    () =>
+      enrichRegionDemandSnapshot(meta?.regionSalesSnapshot || null, {
+        tariffList: tariffCtx.tariffList,
+        cargoType: tariffCtx.cargoType,
+      }),
+    [meta?.regionSalesSnapshot, tariffCtx.tariffList, tariffCtx.cargoType]
+  );
 
   const supplyPlan = useMemo(
     () =>
@@ -223,7 +240,9 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
                       <td className="px-4 py-2 text-slate-600">{item.foName || '—'}</td>
                     ) : null}
                     {view === 'warehouse' ? (
-                      <td className="px-4 py-2 text-slate-600">{(item.regions || []).join(', ') || '—'}</td>
+                      <td className="px-4 py-2 text-slate-600">
+                        {(item.regions || []).join(', ') || '—'}
+                      </td>
                     ) : null}
                     {view === 'region' ? (
                       <td className="px-4 py-2 text-slate-700">
