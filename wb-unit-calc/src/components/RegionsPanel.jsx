@@ -4,7 +4,12 @@ import {
   formatWarehouseCoeffPercent,
   resolveRegionTariffContext,
 } from '@lib/region-supply-recommendations.js';
-import { buildRegionSupplyAnalysis } from '@lib/wb-region-supply-plan.js';
+import {
+  buildRegionSupplyAnalysis,
+  resolveStockHorizonDays,
+} from '@lib/wb-region-supply-plan.js';
+import { downloadShipPlanCsv, downloadShipPlanXls } from '../lib/ship-plan-export';
+import { mergeUnitSettings } from '@lib/unit-economics/settings.js';
 import { enrichRegionDemandSnapshot, isFederalDistrictLabel } from '@lib/wb-region-sales.js';
 import { fmtMoney, fmtNum, fmtPct } from '../lib/format';
 import { regionEmptyMessage, regionSourceLabel } from '../lib/region-empty-message';
@@ -28,7 +33,10 @@ const PLAN_VIEWS = [
   { id: 'il-impact', label: 'Влияние на ИЛ' },
   { id: 'shortage', label: 'Потери' },
   { id: 'ship', label: 'Отгрузить' },
+  { id: 'skip', label: 'Не везти' },
 ];
+
+const STOCK_HORIZON_OPTIONS = [7, 14, 30, 45];
 
 const PLAN_SORT_OPTIONS = {
   'il-impact': [
@@ -49,12 +57,18 @@ const PLAN_SORT_OPTIONS = {
     { id: 'demand', label: 'Спрос' },
     { id: 'vendor', label: 'Артикул' },
   ],
+  skip: [
+    { id: 'surplus', label: 'Избыток' },
+    { id: 'orders', label: 'Заказы' },
+    { id: 'vendor', label: 'Артикул' },
+  ],
 };
 
 const DEFAULT_SORT = {
   'il-impact': 'ilImprove',
   shortage: 'penalty',
   ship: 'shipQty',
+  skip: 'surplus',
 };
 
 function Kpi({ label, value, sub }) {
@@ -203,6 +217,7 @@ function groupShipRows(lines) {
         children: [],
         shipQty: 0,
         demandQty: 0,
+        supplyCostRub: 0,
         ilImprovePct: 0,
         warehouses: new Set(),
         regions: new Set(),
@@ -212,6 +227,7 @@ function groupShipRows(lines) {
     g.children.push(row);
     g.shipQty += row.shipQty || 0;
     g.demandQty += row.demandQty || 0;
+    g.supplyCostRub += row.supplyCostRub || 0;
     g.ilImprovePct += row.ilImprovePct || 0;
     g.warehouses.add(row.warehouseName);
     g.regions.add(row.regionLabel);
@@ -222,6 +238,35 @@ function groupShipRows(lines) {
     regionCount: g.regions.size,
     children: g.children.sort((a, b) => b.priority - a.priority || b.shipQty - a.shipQty),
   }));
+}
+
+function groupSkipRows(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const key = row.nmId;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        nmId: key,
+        vendorCode: row.vendorCode,
+        children: [],
+        orders: 0,
+        horizonDemand: 0,
+        foStockQty: 0,
+        surplusQty: 0,
+      });
+    }
+    const g = groups.get(key);
+    g.children.push(row);
+    g.orders += row.orders || 0;
+    g.horizonDemand += row.horizonDemand || 0;
+    g.foStockQty += row.foStockQty || 0;
+    g.surplusQty += row.surplusQty || 0;
+  }
+  for (const g of groups.values()) {
+    g.regionCount = g.children.length;
+    g.children.sort((a, b) => (b.surplusQty || 0) - (a.surplusQty || 0));
+  }
+  return [...groups.values()];
 }
 
 function sortSkuGroups(groups, sortBy, view) {
@@ -245,9 +290,12 @@ function sortSkuGroups(groups, sortBy, view) {
         return (b.shipQty || 0) - (a.shipQty || 0);
       case 'demand':
         return (b.demandQty || 0) - (a.demandQty || 0);
+      case 'surplus':
+        return (b.surplusQty || 0) - (a.surplusQty || 0);
       default:
         if (view === 'shortage') return (b.totalPenaltyRub || 0) - (a.totalPenaltyRub || 0);
         if (view === 'ship') return (b.shipQty || 0) - (a.shipQty || 0);
+        if (view === 'skip') return (b.surplusQty || 0) - (a.surplusQty || 0);
         return (b.ilImprovePct || 0) - (a.ilImprovePct || 0);
     }
   });
@@ -460,6 +508,7 @@ function ShipTable({ lines, titleByNmId, expanded, onToggle, sortBy }) {
           <ThHint hint={PLANNER_HINTS.columns.warehousesCount}>Складов</ThHint>
           <ThHint hint={PLANNER_HINTS.columns.demandQty}>Спрос</ThHint>
           <ThHint hint={PLANNER_HINTS.columns.shipQty}>Отгрузить</ThHint>
+          <ThHint hint={PLANNER_HINTS.columns.supplyCost}>Стоимость</ThHint>
           <ThHint hint={PLANNER_HINTS.columns.ilImprovePct}>Потенциал ИЛ %</ThHint>
         </tr>
       </thead>
@@ -479,6 +528,9 @@ function ShipTable({ lines, titleByNmId, expanded, onToggle, sortBy }) {
                 <td className="px-4 py-2 tabular-nums">{fmtNum(group.demandQty, 0)}</td>
                 <td className="px-4 py-2 tabular-nums text-lg font-bold text-emerald-700">
                   {fmtNum(group.shipQty, 0)}
+                </td>
+                <td className="px-4 py-2 tabular-nums text-slate-600">
+                  {group.supplyCostRub ? fmtMoney(group.supplyCostRub) : '—'}
                 </td>
                 <td className="px-4 py-2 tabular-nums text-emerald-700">
                   {group.ilImprovePct ? `+${Math.round(group.ilImprovePct * 10) / 10}%` : '—'}
@@ -502,6 +554,18 @@ function ShipTable({ lines, titleByNmId, expanded, onToggle, sortBy }) {
                           (ост. {fmtNum(row.currentStock, 0)})
                         </span>
                       </td>
+                      <td className="px-4 py-1.5 tabular-nums text-slate-600">
+                        {row.supplyCostRub ? (
+                          <>
+                            {fmtMoney(row.supplyCostRub)}
+                            <span className="ml-1 text-slate-400">
+                              ({fmtMoney(row.acceptanceRub)}+{fmtMoney(row.storageRub)})
+                            </span>
+                          </>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
                       <td className="px-4 py-1.5 tabular-nums text-emerald-700">
                         {row.ilImprovePct != null ? `+${row.ilImprovePct}%` : '—'}
                       </td>
@@ -513,8 +577,74 @@ function ShipTable({ lines, titleByNmId, expanded, onToggle, sortBy }) {
         })}
         {!groups.length ? (
           <tr>
-            <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+            <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
               Нет рекомендаций к отгрузке — локальные остатки покрывают спрос
+            </td>
+          </tr>
+        ) : null}
+      </tbody>
+    </table>
+  );
+}
+
+function SkipTable({ rows, titleByNmId, expanded, onToggle, sortBy, horizonDays }) {
+  const groups = useMemo(
+    () => sortSkuGroups(groupSkipRows(rows), sortBy, 'skip'),
+    [rows, sortBy]
+  );
+
+  return (
+    <table className="min-w-full text-left text-xs">
+      <thead className="sticky top-0 z-10 bg-slate-100 text-slate-600">
+        <tr>
+          <th className="px-4 py-2 font-medium">#</th>
+          <th className="px-4 py-2 font-medium">Артикул</th>
+          <ThHint hint={PLANNER_HINTS.columns.regionsCount}>Регионов</ThHint>
+          <ThHint hint={PLANNER_HINTS.columns.horizonDemand}>Спрос на {horizonDays} дн.</ThHint>
+          <ThHint hint={PLANNER_HINTS.columns.foStock}>Остаток в ФО</ThHint>
+          <ThHint hint={PLANNER_HINTS.columns.surplusQty}>Избыток</ThHint>
+        </tr>
+      </thead>
+      <tbody>
+        {groups.map((group, index) => {
+          const open = expanded.has(group.nmId);
+          return (
+            <Fragment key={group.nmId}>
+              <tr
+                className="cursor-pointer border-t border-slate-100 hover:bg-slate-50/80"
+                onClick={() => onToggle(group.nmId)}
+              >
+                <td className="px-4 py-2 text-slate-400">{index + 1}</td>
+                <SkuCell group={group} titleByNmId={titleByNmId} open={open} onToggle={() => onToggle(group.nmId)} />
+                <td className="px-4 py-2 tabular-nums text-slate-600">{group.regionCount}</td>
+                <td className="px-4 py-2 tabular-nums">{fmtNum(group.horizonDemand, 0)}</td>
+                <td className="px-4 py-2 tabular-nums text-slate-700">{fmtNum(group.foStockQty, 0)}</td>
+                <td className="px-4 py-2 tabular-nums font-semibold text-slate-700">
+                  {fmtNum(group.surplusQty, 0)}
+                </td>
+              </tr>
+              {open
+                ? group.children.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-50 bg-slate-50/60 text-[11px]">
+                      <td className="px-4 py-1.5" />
+                      <td className="px-4 py-1.5 pl-10 text-slate-500">{row.regionLabel}</td>
+                      <td className="px-4 py-1.5 text-slate-400">{row.foName || '—'}</td>
+                      <td className="px-4 py-1.5 tabular-nums">{fmtNum(row.horizonDemand, 0)}</td>
+                      <td className="px-4 py-1.5 tabular-nums">{fmtNum(row.foStockQty, 0)}</td>
+                      <td className="px-4 py-1.5">
+                        <span className="font-medium text-slate-700">{fmtNum(row.surplusQty, 0)}</span>
+                        <span className="ml-2 text-slate-400">{row.reason}</span>
+                      </td>
+                    </tr>
+                  ))
+                : null}
+            </Fragment>
+          );
+        })}
+        {!groups.length ? (
+          <tr>
+            <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+              Нет SKU с избыточным остатком на выбранном горизонте
             </td>
           </tr>
         ) : null}
@@ -540,6 +670,9 @@ function PlanFiltersBar({
   regions,
   warehouses,
   resultCount,
+  stockHorizonDays,
+  onStockHorizonChange,
+  shipExportLines,
 }) {
   const sortOptions = PLAN_SORT_OPTIONS[view] || [];
 
@@ -583,6 +716,41 @@ function PlanFiltersBar({
             </option>
           ))}
         </select>
+        {view === 'ship' || view === 'skip' ? (
+          <label className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+            Горизонт
+            <HintIcon text={PLANNER_HINTS.kpi.stockHorizon} />
+            <select
+              className="input w-20 py-1.5 text-xs"
+              value={stockHorizonDays}
+              onChange={(e) => onStockHorizonChange(Number(e.target.value))}
+            >
+              {STOCK_HORIZON_OPTIONS.map((days) => (
+                <option key={days} value={days}>
+                  {days} дн.
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {view === 'ship' && shipExportLines?.length ? (
+          <>
+            <button
+              type="button"
+              className="btn-secondary py-1.5 text-xs"
+              onClick={() => downloadShipPlanCsv(shipExportLines)}
+            >
+              CSV
+            </button>
+            <button
+              type="button"
+              className="btn-secondary py-1.5 text-xs"
+              onClick={() => downloadShipPlanXls(shipExportLines)}
+            >
+              XLS
+            </button>
+          </>
+        ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
         {view === 'il-impact' ? (
@@ -615,7 +783,13 @@ function PlanFiltersBar({
   );
 }
 
-export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tariffCache = null }) {
+export default function RegionsPanel({
+  rows = [],
+  meta = {},
+  settings = {},
+  tariffCache = null,
+  onSettingsChange,
+}) {
   const [view, setView] = useState('il-impact');
   const [query, setQuery] = useState('');
   const [regionFilter, setRegionFilter] = useState('');
@@ -644,6 +818,49 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
       setOnlyIlPotential(false);
       setRegionFilter('');
       setWarehouseFilter('');
+    }
+  };
+
+  const stockHorizonDays = resolveStockHorizonDays(settings);
+
+  const handleStockHorizonChange = (days) => {
+    if (!STOCK_HORIZON_OPTIONS.includes(days)) return;
+    onSettingsChange?.((prev) => mergeUnitSettings({ ...prev, regionStockHorizonDays: days }));
+  };
+
+  const drillDownFromGeo = (item) => {
+    if (view === 'warehouse') {
+      const name = item.label || item.warehouseName;
+      if (!name) return;
+      setWarehouseFilter(name);
+      setRegionFilter('');
+      setQuery('');
+      setView('ship');
+      setSortBy(DEFAULT_SORT.ship);
+      return;
+    }
+    if (view === 'region') {
+      setRegionFilter(item.label || item.regionName || '');
+      setWarehouseFilter('');
+      setQuery('');
+      setView('il-impact');
+      setSortBy(DEFAULT_SORT['il-impact']);
+      return;
+    }
+    if (view === 'city') {
+      setRegionFilter(item.regionName || item.label || '');
+      setWarehouseFilter('');
+      setQuery('');
+      setView('il-impact');
+      setSortBy(DEFAULT_SORT['il-impact']);
+      return;
+    }
+    if (view === 'fo') {
+      setQuery(item.label || item.foName || '');
+      setRegionFilter('');
+      setWarehouseFilter('');
+      setView('il-impact');
+      setSortBy(DEFAULT_SORT['il-impact']);
     }
   };
 
@@ -706,7 +923,8 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
     return map;
   }, [rows]);
 
-  const isPlanView = view === 'il-impact' || view === 'shortage' || view === 'ship';
+  const isPlanView =
+    view === 'il-impact' || view === 'shortage' || view === 'ship' || view === 'skip';
 
   const list = useMemo(() => {
     if (!snapshot || isPlanView) return [];
@@ -768,13 +986,20 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
     [regionAnalysis.shipPlan.lines, planFilterOpts]
   );
 
+  const filteredSkip = useMemo(
+    () => applyPlanRowFilters(regionAnalysis.overstockSkip.rows || [], planFilterOpts),
+    [regionAnalysis.overstockSkip.rows, planFilterOpts]
+  );
+
   const planRegions = useMemo(() => {
     const source =
       view === 'shortage'
         ? regionAnalysis.shortageLosses.rows
         : view === 'ship'
           ? regionAnalysis.shipPlan.lines
-          : regionAnalysis.ilImpact.rows;
+          : view === 'skip'
+            ? regionAnalysis.overstockSkip.rows
+            : regionAnalysis.ilImpact.rows;
     return [...new Set((source || []).map((r) => r.regionLabel).filter(Boolean))].sort((a, b) =>
       a.localeCompare(b, 'ru')
     );
@@ -793,13 +1018,19 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
 
   const planSkuCount = useMemo(() => {
     const lines =
-      view === 'shortage' ? filteredShortage : view === 'ship' ? filteredShip : filteredIlImpact;
+      view === 'shortage'
+        ? filteredShortage
+        : view === 'ship'
+          ? filteredShip
+          : view === 'skip'
+            ? filteredSkip
+            : filteredIlImpact;
     return new Set(lines.map((r) => r.nmId)).size;
-  }, [view, filteredIlImpact, filteredShortage, filteredShip]);
+  }, [view, filteredIlImpact, filteredShortage, filteredShip, filteredSkip]);
 
   const topRegion = snapshot?.byRegion?.[0];
   const topAction = supplyPlan.actions?.[0];
-  const { ilImpact, shortageLosses, shipPlan } = regionAnalysis;
+  const { ilImpact, shortageLosses, shipPlan, overstockSkip } = regionAnalysis;
 
   if (!snapshot?.totalQty) {
     const hint = regionEmptyMessage(meta, rows.length);
@@ -857,7 +1088,11 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
             value={shipPlan.summary?.totalUnits ? `${fmtNum(shipPlan.summary.totalUnits, 0)} шт.` : '—'}
             sub={
               shipPlan.summary?.warehouseCount
-                ? `${shipPlan.summary.warehouseCount} склад(ов) · ${shipPlan.summary.skuCount} SKU`
+                ? `${shipPlan.summary.warehouseCount} склад(ов) · ${shipPlan.summary.skuCount} SKU${
+                    shipPlan.summary.totalSupplyCostRub
+                      ? ` · ${fmtMoney(shipPlan.summary.totalSupplyCostRub)}`
+                      : ''
+                  }`
                 : 'См. вкладку «Отгрузить»'
             }
           />
@@ -933,6 +1168,7 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
           {view === 'il-impact' ? <TabDescription hint={PLANNER_HINTS.tabs.ilImpact} /> : null}
           {view === 'shortage' ? <TabDescription hint={PLANNER_HINTS.tabs.shortage} /> : null}
           {view === 'ship' ? <TabDescription hint={PLANNER_HINTS.tabs.ship} /> : null}
+          {view === 'skip' ? <TabDescription hint={PLANNER_HINTS.tabs.skip} /> : null}
           {isPlanView ? (
             <PlanFiltersBar
               view={view}
@@ -951,6 +1187,9 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
               regions={planRegions}
               warehouses={planWarehouses}
               resultCount={planSkuCount}
+              stockHorizonDays={stockHorizonDays}
+              onStockHorizonChange={handleStockHorizonChange}
+              shipExportLines={filteredShip}
             />
           ) : null}
         </div>
@@ -980,6 +1219,15 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
               onToggle={toggleSku}
               sortBy={sortBy}
             />
+          ) : view === 'skip' ? (
+            <SkipTable
+              rows={filteredSkip}
+              titleByNmId={titleByNmId}
+              expanded={expandedSkus}
+              onToggle={toggleSku}
+              sortBy={sortBy}
+              horizonDays={stockHorizonDays}
+            />
           ) : (
             <table className="min-w-full text-left text-xs">
               <thead className="sticky top-0 z-10 bg-slate-100 text-slate-600">
@@ -1005,7 +1253,9 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
                   return (
                     <tr
                       key={`${item.key || item.label}-${index}`}
-                      className="border-t border-slate-100 hover:bg-brand-50/40"
+                      className="cursor-pointer border-t border-slate-100 hover:bg-brand-50/40"
+                      title="Открыть в планировщике"
+                      onClick={() => drillDownFromGeo(item)}
                     >
                       <td className="px-4 py-2 text-slate-400">{index + 1}</td>
                       <td className="px-4 py-2 font-medium text-slate-800">{item.label || item.warehouseName}</td>
