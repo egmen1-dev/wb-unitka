@@ -95,14 +95,26 @@ export async function createWorkspace({ name, payload }) {
 }
 
 export async function saveWorkspaceRemote(team, payload) {
-  const response = await fetch(apiUrl('/api/unit-calc/workspace'), {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ team, payload }),
-  });
-  const data = await readJson(response);
-  if (!response.ok) throw new Error(data.error || `Ошибка ${response.status}`);
-  return data;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(apiUrl('/api/unit-calc/workspace'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ team, payload }),
+      signal: controller.signal,
+    });
+    const data = await readJson(response);
+    if (!response.ok) throw new Error(data.error || `Ошибка ${response.status}`);
+    return data;
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Облако не ответило за 15 с — данные сохранены локально');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';

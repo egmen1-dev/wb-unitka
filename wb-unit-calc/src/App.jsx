@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from 'react';
 import { DEFAULT_UNIT_SETTINGS, mergeUnitSettings } from '@lib/unit-economics/settings.js';
 import UpdateBanner from './components/UpdateBanner';
 import AppShell from './components/AppShell';
@@ -100,29 +100,45 @@ async function syncFromWb({
   catalogCursor = null,
   skipRealization = false,
 }) {
-  const response = await fetch('/api/unit-calc/sync', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      purchaseOverrides: purchases,
-      settings,
-      mode,
-      phase,
-      wbCache,
-      catalogCursor,
-      catalogMaxPages: 5,
-      skipRealization,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutMs = phase === 'catalog' ? 90_000 : 150_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  const { data } = await readJsonResponse(response);
-  if (!response.ok) {
-    throw new Error(data.error || `Ошибка ${response.status}`);
+  try {
+    const response = await fetch('/api/unit-calc/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        purchaseOverrides: purchases,
+        settings,
+        mode,
+        phase,
+        wbCache,
+        catalogCursor,
+        catalogMaxPages: 5,
+        skipRealization,
+      }),
+      signal: controller.signal,
+    });
+
+    const { data } = await readJsonResponse(response);
+    if (!response.ok) {
+      throw new Error(data.error || `Ошибка ${response.status}`);
+    }
+    return data;
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error(
+        'Синхронизация WB заняла слишком долго. Данные из кэша сохранены — повторите «Быстро» через минуту.'
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-  return data;
 }
 
 const recalcRowsCached = createRecalcRows();
@@ -237,6 +253,9 @@ export default function App() {
   const [boot] = useState(() => readBootCache());
   const bootPayload = boot.cache?.payload;
   const bootHadRows = useRef(Boolean(bootPayload?.cache?.rows?.length));
+  const suppressAutoSyncRef = useRef(
+    Boolean(bootPayload?.cache?.rows?.length || bootPayload?.cache?.syncedAt)
+  );
 
   const [team, setTeam] = useState(boot.team);
   const [teamName, setTeamName] = useState(boot.cache?.teamName || '');
@@ -319,7 +338,6 @@ export default function App() {
 
   const skipCloudSave = useRef(true);
   const syncRunId = useRef(0);
-  const autoSyncStarted = useRef(false);
   const persistTimer = useRef(null);
   const baseRowsRef = useRef(baseRows);
   baseRowsRef.current = baseRows;
@@ -338,9 +356,11 @@ export default function App() {
     [baseRows]
   );
 
+  const deferredBaseRows = useDeferredValue(baseRows);
+
   const rows = useMemo(
-    () => recalcRowsCached(baseRows, purchases, settings, productOverrides),
-    [baseRows, purchases, settings, productOverrides]
+    () => recalcRowsCached(deferredBaseRows, purchases, settings, productOverrides),
+    [deferredBaseRows, purchases, settings, productOverrides]
   );
 
   const isTeamCreator = useMemo(
@@ -485,6 +505,9 @@ export default function App() {
       }
       setWorkspaceUpdatedAt(data.updatedAt || '');
       saveWorkspaceSnapshot(teamCode, data);
+      if (data.payload?.cache?.syncedAt || data.payload?.cache?.rows?.length) {
+        suppressAutoSyncRef.current = true;
+      }
     }
     return data;
   }, []);
@@ -581,18 +604,17 @@ export default function App() {
 
       if (bootPayload?.cache?.rows?.length) {
         skipCloudSave.current = false;
+        suppressAutoSyncRef.current = true;
         setCloudRefreshing(true);
-        try {
-          await refreshTeamWorkspace(candidate, {
-            ifUnchangedSince: boot.cache?.updatedAt || workspaceUpdatedAt || '',
-          });
-        } catch (err) {
-          if (!err.needsTeam) {
-            setCloudStatus('Облако недоступно — показаны локальные данные');
-          }
-        } finally {
-          setCloudRefreshing(false);
-        }
+        refreshTeamWorkspace(candidate, {
+          ifUnchangedSince: boot.cache?.updatedAt || workspaceUpdatedAt || '',
+        })
+          .catch((err) => {
+            if (!err.needsTeam) {
+              setCloudStatus('Облако недоступно — показаны локальные данные');
+            }
+          })
+          .finally(() => setCloudRefreshing(false));
         return;
       }
 
@@ -1036,8 +1058,8 @@ export default function App() {
           setError(err.message || 'Не удалось загрузить данные');
         }
       } finally {
-        if (!isStale()) {
-          flushSyncUi(true);
+        flushSyncUi(true);
+        if (syncRunId.current === runId) {
           setLoading(false);
           setEnriching(false);
           setHint('', { force: true });
@@ -1056,9 +1078,14 @@ export default function App() {
   }, [runSync]);
 
   useEffect(() => {
-    if (cloudSyncing || autoSyncStarted.current || loading || enriching || !activeProfile?.token) return;
+    if (cloudSyncing || suppressAutoSyncRef.current || loading || enriching || !activeProfile?.token) {
+      return;
+    }
     if (!baseRows.length) return;
-    // F5 с локальным кэшем — не запускаем полную синхронизацию WB автоматически
+    if (syncedAt) {
+      suppressAutoSyncRef.current = true;
+      return;
+    }
     if (bootHadRows.current) return;
 
     const reportSalesCount = baseRows.filter((row) => Number(row.reportSales) > 0).length;
@@ -1074,7 +1101,7 @@ export default function App() {
 
     if (!needsReport) return;
 
-    autoSyncStarted.current = true;
+    suppressAutoSyncRef.current = true;
     runSync(
       meta?.realizationCatalogMismatch || (meta?.catalogPricesOverlapPct != null && meta.catalogPricesOverlapPct < 0.85)
         ? 'full'

@@ -519,7 +519,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
           })
         : fetchSellerLogisticsIndices(token, {
             days: 90,
-            maxPages: profile.ordersPages > 0 ? Math.max(profile.ordersPages, 20) : 30,
+            maxPages: mode === 'full' ? 25 : 8,
             tariffByName: boxTariffs.byName || new Map(),
           }),
     ]);
