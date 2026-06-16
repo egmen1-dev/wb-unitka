@@ -1,7 +1,33 @@
 import { fmtMoney, fmtNum, fmtPct } from '../lib/format';
 import { formatWarehouseCoeffPercent } from '@lib/region-supply-recommendations.js';
+import { HintIcon, STRATEGY_HINTS } from './RegionsPlannerHints';
 
-function IndexGauge({ label, value, suffix, sub, tone = 'brand' }) {
+function formatIlDisplay(il) {
+  const n = Number(il) || 1;
+  if (n <= 1.005) {
+    return { value: 'без надбавки', detail: '×1.00 — локализация в норме' };
+  }
+  return {
+    value: `×${n.toFixed(2)}`,
+    detail: `+${Math.round((n - 1) * 100)}% к литровой логистике`,
+  };
+}
+
+function formatIrpDisplay(irp) {
+  const pct = (Number(irp) || 0) * 100;
+  if (pct <= 0.01) {
+    return { value: 'нет', detail: 'плата с цены не начисляется' };
+  }
+  return { value: `${pct.toFixed(2)}%`, detail: 'плата с цены товара (ИРП)' };
+}
+
+function formatTargetIlDisplay(targetIl) {
+  const n = Number(targetIl) || 1;
+  if (n <= 1.005) return 'без надбавки';
+  return `×${n.toFixed(2)}`;
+}
+
+function IndexGauge({ label, hint, value, suffix, sub, tone = 'brand' }) {
   const tones = {
     brand: 'from-brand-500 to-brand-600',
     amber: 'from-amber-500 to-orange-500',
@@ -9,7 +35,10 @@ function IndexGauge({ label, value, suffix, sub, tone = 'brand' }) {
   };
   return (
     <div className="rounded-2xl border border-white/60 bg-white/80 p-4 shadow-sm backdrop-blur">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        {label}
+        {hint ? <HintIcon text={hint} placement="top" /> : null}
+      </p>
       <p className="mt-2 text-2xl font-bold tabular-nums text-slate-900">
         {value}
         {suffix ? <span className="ml-1 text-base font-semibold text-slate-500">{suffix}</span> : null}
@@ -121,7 +150,22 @@ function ActionCard({ action, rank }) {
 export default function RegionRecommendations({ plan }) {
   if (!plan?.indices) return null;
 
-  const { indices, actions, supplyPlan, profile, currentWarehouse, currentCostPerUnit, hasTariffs } = plan;
+  const {
+    indices,
+    actions,
+    supplyPlan,
+    profile,
+    currentWarehouse,
+    currentWarehouseCoeff,
+    currentCostPerUnit,
+    hasTariffs,
+  } = plan;
+
+  const il = formatIlDisplay(indices.localizationIndex);
+  const irp = formatIrpDisplay(indices.salesDistributionIndex);
+  const warehouseLabel = currentWarehouse || 'Не задан в таблице';
+  const warehouseCoeffLabel =
+    currentWarehouseCoeff > 0 ? formatWarehouseCoeffPercent(currentWarehouseCoeff) : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -132,11 +176,12 @@ export default function RegionRecommendations({ plan }) {
               Стратегия поставок
             </p>
             <h2 className="mt-1 text-xl font-bold leading-snug">
-              Куда везти товар с учётом коэфф. складов, ИЛ и ИРП
+              Логистика FBO: склады, локализация и штрафы WB
             </h2>
             <p className="mt-2 text-sm text-brand-100/90">
-              Коэфф. складов — из API WB <code className="rounded bg-white/10 px-1">tariffs/box</code>{' '}
-              (как на странице delivery, в %). В ₽/ед. учтены ИЛ и ИРП вашего кабинета.
+              Ниже — ваши текущие индексы ИЛ и ИРП, основной склад из таблицы SKU и оценка,
+              что изменится после отгрузки в регионы спроса. Коэфф. складов — из тарифов WB
+              {hasTariffs ? '' : ' (нажмите «Быстро» для загрузки)'}.
             </p>
             {plan.cargoTypeLabel ? (
               <p className="mt-2 inline-flex flex-wrap items-center gap-2">
@@ -156,7 +201,10 @@ export default function RegionRecommendations({ plan }) {
           </div>
           {indices.targetSavingsPerUnit > 0 ? (
             <div className="rounded-2xl bg-white/10 px-4 py-3 backdrop-blur">
-              <p className="text-[11px] uppercase tracking-wide text-brand-100">Потенциал</p>
+              <p className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wide text-brand-100">
+                Экономия на индексах
+                <HintIcon text={STRATEGY_HINTS.potential} variant="onDark" placement="top" />
+              </p>
               <p className="mt-1 text-2xl font-bold tabular-nums">
                 −{fmtMoney(indices.targetSavingsPerUnit)}
                 <span className="text-sm font-medium text-brand-100">/ед.</span>
@@ -170,37 +218,46 @@ export default function RegionRecommendations({ plan }) {
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <IndexGauge
-            label="Индекс локализации"
-            value={`×${indices.localizationIndex.toFixed(2)}`}
+            label="Локализация (ИЛ)"
+            hint={STRATEGY_HINTS.localizationIndex}
+            value={il.value}
             sub={
               indices.avgLocalizationSharePct != null
-                ? `~${indices.avgLocalizationSharePct.toFixed(0)}% локальных заказов`
-                : 'Цель: ×1.0–1.1'
+                ? `${il.detail} · ~${indices.avgLocalizationSharePct.toFixed(0)}% локальных заказов`
+                : il.detail
             }
             tone={indices.localizationIndex > 1.1 ? 'amber' : 'emerald'}
           />
           <IndexGauge
-            label="ИРП"
-            value={`${(indices.salesDistributionIndex * 100).toFixed(2)}%`}
-            sub={`≈ ${fmtMoney(indices.indexCostPerUnit - (indices.targetSavingsPerUnit || 0))} только индексы`}
+            label="Распределение (ИРП)"
+            hint={STRATEGY_HINTS.irp}
+            value={irp.value}
+            sub={
+              indices.indexCostPerUnit != null
+                ? `${irp.detail} · штрафы ≈ ${fmtMoney(indices.indexCostPerUnit)}/ед.`
+                : irp.detail
+            }
             tone={indices.salesDistributionIndex > 0.018 ? 'amber' : 'emerald'}
           />
           <IndexGauge
-            label="Текущий склад"
-            value={currentWarehouse || 'не указан'}
-            suffix=""
+            label="Ваш основной склад"
+            hint={STRATEGY_HINTS.currentWarehouse}
+            value={warehouseLabel}
             sub={
               currentCostPerUnit != null
-                ? `~${fmtMoney(currentCostPerUnit)}/ед. с ИЛ/ИРП`
-                : `тип. коэфф. ${profile?.currentWarehouseCoeff?.toFixed(2)}`
+                ? `${warehouseCoeffLabel ? `коэфф. ${warehouseCoeffLabel} · ` : ''}~${fmtMoney(currentCostPerUnit)}/ед. с ИЛ/ИРП`
+                : warehouseCoeffLabel
+                  ? `тип. коэфф. ${warehouseCoeffLabel}`
+                  : 'Укажите склад FBO в строках таблицы'
             }
             tone="brand"
           />
           <IndexGauge
             label="Цель после раскладки"
-            value={`×${indices.targetIl}`}
-            suffix={` · ${indices.targetIrpPct}%`}
-            sub="Оценка при покрытии топ-регионов"
+            hint={STRATEGY_HINTS.target}
+            value={formatTargetIlDisplay(indices.targetIl)}
+            suffix={indices.targetIrpPct > 0.01 ? ` · ИРП ${indices.targetIrpPct}%` : ''}
+            sub="Оценка при отгрузке в топ-регионы спроса"
             tone="emerald"
           />
         </div>
