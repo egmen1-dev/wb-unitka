@@ -812,6 +812,9 @@ export default function App() {
         regionSalesTotalQty: data.regionSalesSynced
           ? data.regionSalesTotalQty ?? prev.regionSalesTotalQty
           : prev.regionSalesTotalQty,
+        regionSalesSnapshotHash: data.regionSalesSynced
+          ? data.regionSalesSnapshotHash ?? prev.regionSalesSnapshotHash
+          : prev.regionSalesSnapshotHash,
         supplierMeta: data.supplierMeta ?? prev.supplierMeta,
         syncMode: data.syncMode ?? prev.syncMode,
         fullCatalogAt: data.fullCatalogAt ?? prev.fullCatalogAt,
@@ -1526,7 +1529,8 @@ export default function App() {
             meta={meta}
             settings={settings}
             tariffCache={wbProductCache?.tariffCache || null}
-            onSettingsChange={setSettings}
+            onSettingsChange={handleSettingsChange}
+            syncedAt={syncedAt}
           />
         ) : (
           <SectionAccessDenied
