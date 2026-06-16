@@ -13,7 +13,7 @@ Workflow: `.github/workflows/deploy-wb-unitka.yml`
 |--------|----------|
 | `VERCEL_TOKEN` | [vercel.com/account/tokens](https://vercel.com/account/tokens) → Create Token |
 | `VERCEL_ORG_ID` | `team_YX8AH2117J6xq38HdANK9L11` |
-| `VERCEL_PROJECT_ID` | `prj_zLmXxsah6LjN1QgRUe0v8EeYNmZr` |
+| `VERCEL_UNIT_PROJECT_ID` | `prj_zLmXxsah6LjN1QgRUe0v8EeYNmZr` |
 
 После добавления секретов любой `git push` в эти ветки деплоит на https://wb-unitka.vercel.app
 
