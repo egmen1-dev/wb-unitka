@@ -44,6 +44,7 @@ export default async function handler(req, res) {
           ? 'realization'
           : 'data';
     const wbCache = req.body?.wbCache || null;
+    const settings = req.body?.settings || {};
     const snapshot = await fetchWbCatalogSnapshot(token, {
       mode,
       phase,
@@ -51,6 +52,7 @@ export default async function handler(req, res) {
       catalogCursor: req.body?.catalogCursor || null,
       catalogMaxPages: req.body?.catalogMaxPages,
       skipRealization: req.body?.skipRealization === true,
+      settings,
     });
 
     if (snapshot.phase === 'catalog') {
@@ -68,10 +70,8 @@ export default async function handler(req, res) {
     }
 
     const purchaseOverrides = req.body?.purchaseOverrides || {};
-    const settings = req.body?.settings || {};
 
-    let supplierIndex = null;
-    let supplierMeta = null;
+    let supplierIndex = null;    let supplierMeta = null;
 
     if (req.body?.supplierCatalog?.byDigitKey) {
       supplierIndex = deserializeSupplierIndex(req.body.supplierCatalog);

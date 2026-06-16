@@ -1,19 +1,26 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   buildRegionSupplyRecommendations,
   formatWarehouseCoeffPercent,
   resolveRegionTariffContext,
 } from '@lib/region-supply-recommendations.js';
 import {
+  buildFoSkuMatrix,
+  buildFoWarehousePriority,
   buildRegionSupplyAnalysis,
+  resolveRegionDemandDays,
   resolveStockHorizonDays,
 } from '@lib/wb-region-supply-plan.js';
-import { downloadShipPlanCsv, downloadShipPlanXls } from '../lib/ship-plan-export';
-import { mergeUnitSettings } from '@lib/unit-economics/settings.js';
-import { enrichRegionDemandSnapshot, isFederalDistrictLabel } from '@lib/wb-region-sales.js';
+import { enrichRegionDemandSnapshot, isFederalDistrictLabel, scaleRegionDemandSnapshot } from '@lib/wb-region-sales.js';
 import { fmtMoney, fmtNum, fmtPct } from '../lib/format';
 import { regionEmptyMessage, regionSourceLabel } from '../lib/region-empty-message';
+import { updateRegionSnapshotCache } from '../lib/region-snapshot-cache';
 import RegionRecommendations from './RegionRecommendations';
+import RegionsScenarioSimulator from './RegionsScenarioSimulator';
+import RegionsFoSkuMatrix from './RegionsFoSkuMatrix';
+import RegionsInTransitPanel from './RegionsInTransitPanel';
+import RegionsFoWarehouses from './RegionsFoWarehouses';
+import RegionsPeriodDelta from './RegionsPeriodDelta';
 import {
   HintIcon,
   KpiWithHint,
@@ -34,7 +41,13 @@ const PLAN_VIEWS = [
   { id: 'shortage', label: 'Потери' },
   { id: 'ship', label: 'Отгрузить' },
   { id: 'skip', label: 'Не везти' },
+  { id: 'matrix', label: 'Матрица' },
+  { id: 'simulator', label: 'Симулятор' },
+  { id: 'in-transit', label: 'В пути' },
+  { id: 'fo-warehouses', label: 'Склады ФО' },
 ];
+
+const DEMAND_PERIOD_OPTIONS = [7, 14, 30];
 
 const STOCK_HORIZON_OPTIONS = [7, 14, 30, 45];
 
@@ -789,6 +802,7 @@ export default function RegionsPanel({
   settings = {},
   tariffCache = null,
   onSettingsChange,
+  syncedAt = '',
 }) {
   const [view, setView] = useState('il-impact');
   const [query, setQuery] = useState('');
@@ -822,11 +836,30 @@ export default function RegionsPanel({
   };
 
   const stockHorizonDays = resolveStockHorizonDays(settings);
+  const demandPeriodDays = resolveRegionDemandDays(settings);
 
   const handleStockHorizonChange = (days) => {
     if (!STOCK_HORIZON_OPTIONS.includes(days)) return;
     onSettingsChange?.((prev) => mergeUnitSettings({ ...prev, regionStockHorizonDays: days }));
   };
+
+  const handleDemandPeriodChange = (days) => {
+    if (!DEMAND_PERIOD_OPTIONS.includes(days)) return;
+    onSettingsChange?.((prev) => mergeUnitSettings({ ...prev, regionDemandDays: days }));
+  };
+
+  const sourcePeriodDays = useMemo(() => {
+    const period = meta?.regionSalesPeriod;
+    if (period?.days) return period.days;
+    if (period?.dateFrom && period?.dateTo) {
+      const from = new Date(period.dateFrom).getTime();
+      const to = new Date(period.dateTo).getTime();
+      if (Number.isFinite(from) && Number.isFinite(to)) {
+        return Math.max(1, Math.round((to - from) / (24 * 60 * 60 * 1000)) + 1);
+      }
+    }
+    return 30;
+  }, [meta?.regionSalesPeriod]);
 
   const drillDownFromGeo = (item) => {
     if (view === 'warehouse') {
@@ -865,22 +898,44 @@ export default function RegionsPanel({
   };
 
   const periodLabel = meta?.regionSalesPeriod
-    ? `${meta.regionSalesPeriod.dateFrom} — ${meta.regionSalesPeriod.dateTo}`
-    : '30 дней';
+    ? demandPeriodDays !== sourcePeriodDays
+      ? `${demandPeriodDays} дн. (масштаб из ${sourcePeriodDays})`
+      : `${meta.regionSalesPeriod.dateFrom} — ${meta.regionSalesPeriod.dateTo}`
+    : `${demandPeriodDays} дней`;
 
   const tariffCtx = useMemo(
     () => resolveRegionTariffContext(tariffCache, rows, settings, meta),
     [tariffCache, rows, settings, meta]
   );
 
-  const snapshot = useMemo(
-    () =>
-      enrichRegionDemandSnapshot(meta?.regionSalesSnapshot || null, {
-        tariffList: tariffCtx.tariffList,
-        cargoType: tariffCtx.warehouseCargoType,
-      }),
-    [meta?.regionSalesSnapshot, tariffCtx.tariffList, tariffCtx.warehouseCargoType]
-  );
+  const snapshot = useMemo(() => {
+    const enriched = enrichRegionDemandSnapshot(meta?.regionSalesSnapshot || null, {
+      tariffList: tariffCtx.tariffList,
+      cargoType: tariffCtx.warehouseCargoType,
+    });
+    if (!enriched) return null;
+    if (demandPeriodDays !== sourcePeriodDays) {
+      return scaleRegionDemandSnapshot(enriched, sourcePeriodDays, demandPeriodDays);
+    }
+    return enriched;
+  }, [
+    meta?.regionSalesSnapshot,
+    tariffCtx.tariffList,
+    tariffCtx.warehouseCargoType,
+    demandPeriodDays,
+    sourcePeriodDays,
+  ]);
+
+  const [periodDeltas, setPeriodDeltas] = useState([]);
+  const [previousSyncedAt, setPreviousSyncedAt] = useState(null);
+
+  useEffect(() => {
+    const hash = meta?.regionSalesSnapshotHash;
+    if (!hash || !snapshot?.byRegion?.length) return;
+    const { deltas, previousSyncedAt: prevAt } = updateRegionSnapshotCache(hash, snapshot, syncedAt);
+    setPeriodDeltas(deltas);
+    setPreviousSyncedAt(prevAt);
+  }, [meta?.regionSalesSnapshotHash, snapshot, syncedAt]);
 
   const supplyPlan = useMemo(
     () =>
@@ -897,6 +952,33 @@ export default function RegionsPanel({
   const regionAnalysis = useMemo(
     () =>
       buildRegionSupplyAnalysis({
+        snapshot,
+        rows,
+        settings,
+        meta,
+        tariffCache,
+        supplyPlan,
+      }),
+    [snapshot, rows, settings, meta, tariffCache, supplyPlan]
+  );
+
+  const foSkuMatrix = useMemo(
+    () =>
+      buildFoSkuMatrix({
+        snapshot,
+        rows,
+        settings,
+        meta,
+        tariffCache,
+        supplyPlan,
+        regionAnalysis,
+      }),
+    [snapshot, rows, settings, meta, tariffCache, supplyPlan, regionAnalysis]
+  );
+
+  const foWarehousePriority = useMemo(
+    () =>
+      buildFoWarehousePriority({
         snapshot,
         rows,
         settings,
@@ -924,7 +1006,14 @@ export default function RegionsPanel({
   }, [rows]);
 
   const isPlanView =
-    view === 'il-impact' || view === 'shortage' || view === 'ship' || view === 'skip';
+    view === 'il-impact' ||
+    view === 'shortage' ||
+    view === 'ship' ||
+    view === 'skip' ||
+    view === 'matrix' ||
+    view === 'simulator' ||
+    view === 'in-transit' ||
+    view === 'fo-warehouses';
 
   const list = useMemo(() => {
     if (!snapshot || isPlanView) return [];
@@ -1066,8 +1155,32 @@ export default function RegionsPanel({
               Период: {periodLabel} · источник: {regionSourceLabel(meta?.regionSalesSource)}
               {snapshot.filteredByCatalog ? ' · только ваш каталог' : ' · весь кабинет'}
             </p>
+            <label className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-600">
+              Спрос за
+              <HintIcon text={PLANNER_HINTS.kpi.demandPeriod} />
+              <select
+                className="input w-20 py-1 text-xs"
+                value={demandPeriodDays}
+                onChange={(e) => handleDemandPeriodChange(Number(e.target.value))}
+              >
+                {DEMAND_PERIOD_OPTIONS.map((days) => (
+                  <option key={days} value={days}>
+                    {days} дн.
+                  </option>
+                ))}
+              </select>
+              {demandPeriodDays !== sourcePeriodDays ? (
+                <span className="text-slate-400">· масштабирование · синхронизация загрузит {demandPeriodDays} дн.</span>
+              ) : null}
+            </label>
           </div>
         </div>
+
+        {periodDeltas.length ? (
+          <div className="mt-3">
+            <RegionsPeriodDelta deltas={periodDeltas} previousSyncedAt={previousSyncedAt} />
+          </div>
+        ) : null}
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Kpi label="Заказов (шт.)" value={fmtNum(snapshot.totalQty, 0)} sub={`строк отчёта: ${snapshot.rowCount}`} />
@@ -1169,7 +1282,11 @@ export default function RegionsPanel({
           {view === 'shortage' ? <TabDescription hint={PLANNER_HINTS.tabs.shortage} /> : null}
           {view === 'ship' ? <TabDescription hint={PLANNER_HINTS.tabs.ship} /> : null}
           {view === 'skip' ? <TabDescription hint={PLANNER_HINTS.tabs.skip} /> : null}
-          {isPlanView ? (
+          {view === 'matrix' ? <TabDescription hint={PLANNER_HINTS.tabs.matrix} /> : null}
+          {view === 'simulator' ? <TabDescription hint={PLANNER_HINTS.tabs.simulator} /> : null}
+          {view === 'in-transit' ? <TabDescription hint={PLANNER_HINTS.tabs.inTransit} /> : null}
+          {view === 'fo-warehouses' ? <TabDescription hint={PLANNER_HINTS.tabs.foWarehouses} /> : null}
+          {isPlanView && ['il-impact', 'shortage', 'ship', 'skip'].includes(view) ? (
             <PlanFiltersBar
               view={view}
               query={query}
@@ -1194,7 +1311,16 @@ export default function RegionsPanel({
           ) : null}
         </div>
 
-        <div className="table-scroll max-h-[calc(100vh-420px)] overflow-auto">
+        <div
+          className={
+            view === 'matrix' ||
+            view === 'simulator' ||
+            view === 'in-transit' ||
+            view === 'fo-warehouses'
+              ? ''
+              : 'table-scroll max-h-[calc(100vh-420px)] overflow-auto'
+          }
+        >
           {view === 'il-impact' ? (
             <IlImpactTable
               rows={filteredIlImpact}
@@ -1228,6 +1354,21 @@ export default function RegionsPanel({
               sortBy={sortBy}
               horizonDays={stockHorizonDays}
             />
+          ) : view === 'matrix' ? (
+            <RegionsFoSkuMatrix matrix={foSkuMatrix} horizonDays={stockHorizonDays} />
+          ) : view === 'simulator' ? (
+            <RegionsScenarioSimulator
+              rows={rows}
+              snapshot={snapshot}
+              settings={settings}
+              meta={meta}
+              tariffCache={tariffCache}
+              supplyPlan={supplyPlan}
+            />
+          ) : view === 'in-transit' ? (
+            <RegionsInTransitPanel shipLines={regionAnalysis.shipPlan.lines || []} />
+          ) : view === 'fo-warehouses' ? (
+            <RegionsFoWarehouses foPriority={foWarehousePriority} />
           ) : (
             <table className="min-w-full text-left text-xs">
               <thead className="sticky top-0 z-10 bg-slate-100 text-slate-600">

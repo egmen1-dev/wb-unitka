@@ -35,6 +35,7 @@ import {
 import {
   buildRegionDemandSnapshot,
   fetchRegionSalesReport,
+  hashRegionDemandSnapshot,
   serializeRegionDemandSnapshot,
 } from '../../lib/wb-region-sales.js';
 import { fetchSellerLogisticsIndices } from '../../lib/wb-seller-logistics-indices.js';
@@ -403,6 +404,10 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
   const wbCache = options.wbCache || null;
   const realizationOnly = phase === 'realization' || options.realizationOnly === true;
   const skipRealization = options.skipRealization === true;
+  const syncSettings = options.settings || {};
+  const regionSalesDays = [7, 14, 30].includes(Number(syncSettings.regionDemandDays))
+    ? Number(syncSettings.regionDemandDays)
+    : 30;
 
   if (phase === 'catalog') {
     return fetchCatalogChunkPhase(
@@ -507,7 +512,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
           })),
       isBootstrap || realizationOnly
         ? Promise.resolve({ period: null, report: [], rowCount: 0, error: null })
-        : fetchRegionSalesReport(token, { days: 30 }).catch((err) => ({
+        : fetchRegionSalesReport(token, { days: regionSalesDays }).catch((err) => ({
             period: null,
             report: [],
             rowCount: 0,
@@ -743,6 +748,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       regionSalesSynced: !isBootstrap && !realizationOnly,
       regionSalesSnapshot: serializeRegionDemandSnapshot(regionDemand),
       regionSalesTotalQty: regionDemand.totalQty,
+      regionSalesSnapshotHash: hashRegionDemandSnapshot(regionDemand),
       localizationIndex: logisticsIndices?.localizationIndex ?? null,
       salesDistributionIndex: logisticsIndices?.salesDistributionIndex ?? null,
       localizationIndexSource: logisticsIndices?.source ?? null,
