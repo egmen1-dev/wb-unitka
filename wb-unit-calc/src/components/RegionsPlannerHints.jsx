@@ -1,6 +1,12 @@
 /** Подсказки к метрикам планировщика — формулы из wb-region-supply-plan.js */
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+
+const TOOLTIP_WIDTH = 224;
+const TOOLTIP_GAP = 6;
+const VIEWPORT_MARGIN = 8;
+const HIDE_DELAY_MS = 80;
 
 export const PLANNER_HINTS = {
   kpi: {
@@ -61,21 +67,114 @@ export const STRATEGY_HINTS = {
     'Разница в ₽/ед. между текущими штрафами ИЛ/ИРП и оценкой после улучшения локализации.',
 };
 
+function resolvePlacement(anchorRect, preferred, tipHeight) {
+  const spaceAbove = anchorRect.top - VIEWPORT_MARGIN;
+  const spaceBelow = window.innerHeight - anchorRect.bottom - VIEWPORT_MARGIN;
+  const needed = tipHeight + TOOLTIP_GAP;
+
+  if (preferred === 'top') {
+    if (spaceAbove >= needed) return 'top';
+    if (spaceBelow >= needed) return 'bottom';
+    return spaceBelow >= spaceAbove ? 'bottom' : 'top';
+  }
+
+  if (spaceBelow >= needed) return 'bottom';
+  if (spaceAbove >= needed) return 'top';
+  return spaceAbove >= spaceBelow ? 'top' : 'bottom';
+}
+
+function computeTooltipCoords(anchorRect, tipHeight, tipWidth, placement) {
+  const resolved = resolvePlacement(anchorRect, placement, tipHeight);
+  const halfW = tipWidth / 2;
+  const left = Math.max(
+    VIEWPORT_MARGIN + halfW,
+    Math.min(anchorRect.left + anchorRect.width / 2, window.innerWidth - VIEWPORT_MARGIN - halfW),
+  );
+  const top =
+    resolved === 'top'
+      ? anchorRect.top - TOOLTIP_GAP
+      : anchorRect.bottom + TOOLTIP_GAP;
+
+  return { top, left, placement: resolved };
+}
+
 export function HintIcon({ text, className = '', variant = 'light', placement = 'bottom' }) {
   const [visible, setVisible] = useState(false);
+  const [coords, setCoords] = useState(null);
   const wrapRef = useRef(null);
+  const tipRef = useRef(null);
+  const hideTimerRef = useRef(null);
   const id = useId();
+
+  const clearHideTimer = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  const updatePosition = useCallback(() => {
+    const anchor = wrapRef.current;
+    if (!anchor) return;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const tipHeight = tipRef.current?.offsetHeight || 72;
+    const tipWidth = tipRef.current?.offsetWidth || TOOLTIP_WIDTH;
+    setCoords(computeTooltipCoords(anchorRect, tipHeight, tipWidth, placement));
+  }, [placement]);
+
+  const primeCoords = useCallback(() => {
+    const anchor = wrapRef.current;
+    if (!anchor) return;
+    const anchorRect = anchor.getBoundingClientRect();
+    setCoords(computeTooltipCoords(anchorRect, 72, TOOLTIP_WIDTH, placement));
+  }, [placement]);
+
+  const showTooltip = useCallback(() => {
+    clearHideTimer();
+    primeCoords();
+    setVisible(true);
+  }, [clearHideTimer, primeCoords]);
+
+  const hideTooltip = useCallback(() => {
+    clearHideTimer();
+    hideTimerRef.current = setTimeout(() => setVisible(false), HIDE_DELAY_MS);
+  }, [clearHideTimer]);
+
+  useEffect(() => {
+    if (!visible) {
+      setCoords(null);
+      return undefined;
+    }
+
+    updatePosition();
+    const raf = requestAnimationFrame(updatePosition);
+
+    const onLayout = () => updatePosition();
+    window.addEventListener('scroll', onLayout, true);
+    window.addEventListener('resize', onLayout);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', onLayout, true);
+      window.removeEventListener('resize', onLayout);
+    };
+  }, [visible, updatePosition]);
 
   useEffect(() => {
     if (!visible) return undefined;
     const onDoc = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
-        setVisible(false);
-      }
+      const anchor = wrapRef.current;
+      const tip = tipRef.current;
+      if (anchor?.contains(e.target) || tip?.contains(e.target)) return;
+      clearHideTimer();
+      setVisible(false);
     };
     document.addEventListener('pointerdown', onDoc);
     return () => document.removeEventListener('pointerdown', onDoc);
-  }, [visible]);
+  }, [visible, clearHideTimer]);
+
+  useEffect(() => () => clearHideTimer(), [clearHideTimer]);
 
   if (!text) return null;
 
@@ -84,42 +183,61 @@ export function HintIcon({ text, className = '', variant = 'light', placement = 
     ? 'border-white/40 text-white/70 hover:border-white/60 hover:text-white'
     : 'border-slate-300 text-slate-400 hover:border-slate-400 hover:text-slate-600';
 
-  const tipCls =
-    placement === 'top'
-      ? 'bottom-full left-1/2 mb-1.5 -translate-x-1/2'
-      : 'top-full left-1/2 mt-1.5 -translate-x-1/2';
+  const tooltip =
+    visible && coords
+      ? createPortal(
+          <span
+            ref={tipRef}
+            id={id}
+            role="tooltip"
+            style={{
+              position: 'fixed',
+              top: coords.top,
+              left: coords.left,
+              transform:
+                coords.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+              zIndex: 9999,
+            }}
+            className="pointer-events-auto w-56 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left text-[11px] font-normal normal-case leading-snug tracking-normal text-slate-600 shadow-lg"
+            onMouseEnter={showTooltip}
+            onMouseLeave={hideTooltip}
+          >
+            {text}
+          </span>,
+          document.body,
+        )
+      : null;
 
   return (
-    <span
-      ref={wrapRef}
-      className={`relative inline-flex align-middle ${className}`}
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
-    >
-      <button
-        type="button"
-        className={`inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border text-[9px] font-bold leading-none focus:outline-none focus:ring-1 focus:ring-brand-400 ${btnCls}`}
-        aria-label="Показать подсказку"
-        aria-describedby={visible ? id : undefined}
-        aria-expanded={visible}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setVisible((v) => !v);
-        }}
+    <>
+      <span
+        ref={wrapRef}
+        className={`inline-flex align-middle ${className}`}
+        onMouseEnter={showTooltip}
+        onMouseLeave={hideTooltip}
       >
-        ?
-      </button>
-      {visible ? (
-        <span
-          id={id}
-          role="tooltip"
-          className={`absolute z-[100] w-56 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left text-[11px] font-normal normal-case leading-snug tracking-normal text-slate-600 shadow-lg ${tipCls}`}
+        <button
+          type="button"
+          className={`inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border text-[9px] font-bold leading-none focus:outline-none focus:ring-1 focus:ring-brand-400 ${btnCls}`}
+          aria-label="Показать подсказку"
+          aria-describedby={visible ? id : undefined}
+          aria-expanded={visible}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            clearHideTimer();
+            setVisible((v) => {
+              const next = !v;
+              if (next) primeCoords();
+              return next;
+            });
+          }}
         >
-          {text}
-        </span>
-      ) : null}
-    </span>
+          ?
+        </button>
+      </span>
+      {tooltip}
+    </>
   );
 }
 
