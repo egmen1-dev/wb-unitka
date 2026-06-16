@@ -9,9 +9,17 @@ export function currentBundlePath() {
 }
 
 export async function fetchLatestBundlePath() {
-  const response = await fetch(`/?_=${Date.now()}`, { cache: 'no-store' });
-  if (!response.ok) return '';
-  const html = await response.text();
-  const match = html.match(/\/assets\/index-[^"']+\.js/);
-  return match?.[0] || '';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(`/?_=${Date.now()}`, { cache: 'no-store', signal: controller.signal });
+    if (!response.ok) return '';
+    const html = await response.text();
+    const match = html.match(/\/assets\/index-[^"']+\.js/);
+    return match?.[0] || '';
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timeout);
+  }
 }
