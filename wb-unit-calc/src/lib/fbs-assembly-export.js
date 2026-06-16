@@ -1,12 +1,6 @@
 const EXPORT_COLUMNS = [
-  { key: 'brand', label: 'Бренд' },
   { key: 'vendorCode', label: 'Артикул' },
-  { key: 'nmId', label: 'nmId' },
-  { key: 'title', label: 'Название' },
-  { key: 'qty', label: 'Кол-во' },
-  { key: 'offices', label: 'Склад WB' },
-  { key: 'cargoTypes', label: 'Тип габарита' },
-  { key: 'supplierInCatalog', label: 'В прайсе' },
+  { key: 'qty', label: 'Количество' },
 ];
 
 function escapeCsvCell(value) {
@@ -30,10 +24,7 @@ export function downloadFbsPickListCsv(
 ) {
   const header = EXPORT_COLUMNS.map((c) => c.label).join(';');
   const body = pickList.map((row) =>
-    EXPORT_COLUMNS.map((col) => {
-      if (col.key === 'supplierInCatalog') return row.supplierInCatalog ? 'да' : '';
-      return escapeCsvCell(row[col.key]);
-    }).join(';')
+    EXPORT_COLUMNS.map((col) => escapeCsvCell(row[col.key])).join(';')
   );
   const prefix = warehouseLabel
     ? `${filenamePrefix}-${slugWarehouseLabel(warehouseLabel)}`

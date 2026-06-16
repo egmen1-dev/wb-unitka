@@ -1,9 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
-  aggregateFbsPickListForOffice,
+  aggregateFbsPickListForGroup,
   buildCatalogLookup,
-  listFbsOfficeLabels,
-  officeLabelFromOrder,
+  filterPickListForSupplyGroup,
 } from '@lib/wb-fbs-assembly.js';
 import { fmtNum } from '../lib/format';
 import { readJsonResponse } from '../lib/http';
@@ -26,6 +25,13 @@ function groupPickListByBrand(pickList) {
   return [...byBrand.values()].sort((a, b) => b.qty - a.qty);
 }
 
+function groupFilterLabel(group) {
+  if (!group) return '';
+  const parts = [group.officeLabel, group.cargoTypeLabel].filter(Boolean);
+  if (group.isB2B) parts.push('B2B');
+  return parts.join(' · ');
+}
+
 export default function FbsAssemblyPanel({
   token,
   rows = [],
@@ -40,7 +46,7 @@ export default function FbsAssemblyPanel({
   const [selectedGroups, setSelectedGroups] = useState(new Set());
   const [query, setQuery] = useState('');
   const [onlyInCatalog, setOnlyInCatalog] = useState(false);
-  const [warehouseFilter, setWarehouseFilter] = useState('');
+  const [groupFilterKey, setGroupFilterKey] = useState('');
 
   const catalogRows = useMemo(
     () =>
@@ -83,7 +89,7 @@ export default function FbsAssemblyPanel({
       if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить заказы');
       setData(payload);
       setSelectedGroups(new Set((payload.supplyGroups || []).map((g) => g.key)));
-      setWarehouseFilter('');
+      setGroupFilterKey('');
       setStatus(`Новых заказов: ${payload.summary?.orderCount ?? 0}`);
     } catch (err) {
       setError(err.message || 'Ошибка загрузки');
@@ -157,27 +163,27 @@ export default function FbsAssemblyPanel({
     [catalogRows, supplierDigitKeys]
   );
 
-  const warehouseOptions = useMemo(() => {
-    if (!data?.orders?.length) return [];
-    const labels = listFbsOfficeLabels(data.orders, data.supplyGroups);
-    return labels.map((label) => ({
-      label,
-      orderCount: data.orders.filter((order) => officeLabelFromOrder(order) === label).length,
-    }));
-  }, [data]);
+  const activeGroup = useMemo(
+    () => (data?.supplyGroups || []).find((group) => group.key === groupFilterKey) || null,
+    [data, groupFilterKey]
+  );
 
-  const warehousePickList = useMemo(() => {
-    if (!data?.orders?.length) return data?.pickList || [];
-    return aggregateFbsPickListForOffice(
-      data.orders,
-      warehouseFilter,
-      catalogByVendor,
-      supplierDigitKeys
-    );
-  }, [data, warehouseFilter, catalogByVendor, supplierDigitKeys]);
+  const groupPickList = useMemo(() => {
+    const supplyGroups = data?.supplyGroups || [];
+    if (data?.orders?.length) {
+      return aggregateFbsPickListForGroup(
+        data.orders,
+        groupFilterKey,
+        supplyGroups,
+        catalogByVendor,
+        supplierDigitKeys
+      );
+    }
+    return filterPickListForSupplyGroup(data?.pickList || [], groupFilterKey, supplyGroups);
+  }, [data, groupFilterKey, catalogByVendor, supplierDigitKeys]);
 
   const filteredPickList = useMemo(() => {
-    let list = warehousePickList;
+    let list = groupPickList;
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -190,11 +196,25 @@ export default function FbsAssemblyPanel({
     }
     if (onlyInCatalog) list = list.filter((row) => row.supplierInCatalog);
     return list;
-  }, [warehousePickList, query, onlyInCatalog]);
+  }, [groupPickList, query, onlyInCatalog]);
 
-  const csvButtonLabel = warehouseFilter
-    ? `Скачать CSV (${warehouseFilter.length > 28 ? `${warehouseFilter.slice(0, 25)}…` : warehouseFilter})`
-    : 'CSV для поставщика';
+  const filteredOrderCount = useMemo(() => {
+    if (!groupFilterKey) return data?.orders?.length ?? data?.summary?.orderCount ?? 0;
+    return activeGroup?.orderCount ?? 0;
+  }, [groupFilterKey, activeGroup, data]);
+
+  const filteredSummary = useMemo(() => {
+    const totalQty = filteredPickList.reduce((sum, row) => sum + (row.qty || 0), 0);
+    return {
+      orderCount: filteredOrderCount,
+      skuCount: filteredPickList.length,
+      totalQty,
+    };
+  }, [filteredPickList, filteredOrderCount]);
+
+  const csvExportLabel = activeGroup
+    ? `Скачать CSV (${groupFilterLabel(activeGroup)})`
+    : 'Скачать CSV';
 
   const brandGroups = useMemo(() => groupPickListByBrand(filteredPickList), [filteredPickList]);
 
@@ -225,18 +245,6 @@ export default function FbsAssemblyPanel({
           >
             {loading ? 'Загрузка…' : 'Обновить заказы'}
           </button>
-          {filteredPickList.length || data?.pickList?.length ? (
-            <button
-              type="button"
-              className="btn-secondary"
-              disabled={!filteredPickList.length}
-              onClick={() =>
-                downloadFbsPickListCsv(filteredPickList, { warehouseLabel: warehouseFilter })
-              }
-            >
-              {csvButtonLabel}
-            </button>
-          ) : null}
           {data?.supplyGroups?.length ? (
             <button
               type="button"
@@ -380,8 +388,14 @@ export default function FbsAssemblyPanel({
               <h3 className="text-sm font-semibold text-slate-800">Список к сборке</h3>
               <p className="mt-1 text-xs text-slate-500">
                 Агрегация по артикулу для заказа у поставщика
-                {warehouseFilter ? ` · склад «${warehouseFilter}»` : ''}.
+                {activeGroup ? ` · ${groupFilterLabel(activeGroup)}` : ''}.
               </p>
+              {groupFilterKey ? (
+                <p className="mt-1 text-xs text-slate-600">
+                  По фильтру: {fmtNum(filteredSummary.orderCount)} заказов ·{' '}
+                  {fmtNum(filteredSummary.skuCount)} SKU · {fmtNum(filteredSummary.totalQty)} шт
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -402,42 +416,60 @@ export default function FbsAssemblyPanel({
             </div>
           </div>
 
-          {warehouseOptions.length > 1 ? (
-            <div className="mt-3">
-              <p className="text-xs text-slate-500">Склад WB — список и CSV по выбранному складу</p>
+          {data.supplyGroups?.length ? (
+            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/80 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-medium text-slate-600">
+                  Фильтр по группе / складу — список и CSV
+                </p>
+                {groupFilterKey ? (
+                  <button
+                    type="button"
+                    className="btn-primary text-xs"
+                    disabled={!filteredPickList.length}
+                    onClick={() =>
+                      downloadFbsPickListCsv(filteredPickList, {
+                        warehouseLabel: groupFilterLabel(activeGroup),
+                      })
+                    }
+                  >
+                    {csvExportLabel}
+                  </button>
+                ) : null}
+              </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
                   className={`rounded-full px-3 py-1 text-xs transition ${
-                    !warehouseFilter
+                    !groupFilterKey
                       ? 'bg-brand-600 text-white ring-2 ring-brand-300'
                       : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:ring-brand-200'
                   }`}
-                  onClick={() => setWarehouseFilter('')}
+                  onClick={() => setGroupFilterKey('')}
                 >
-                  Все склады
-                  <span className={!warehouseFilter ? 'text-brand-100' : 'text-slate-400'}>
+                  Все группы
+                  <span className={!groupFilterKey ? 'text-brand-100' : 'text-slate-400'}>
                     {' '}
-                    · {data.orders?.length ?? 0} заказов
+                    · {data.orders?.length ?? data.summary?.orderCount ?? 0} заказов
                   </span>
                 </button>
-                {warehouseOptions.map((option) => {
-                  const active = warehouseFilter === option.label;
+                {data.supplyGroups.map((group) => {
+                  const active = groupFilterKey === group.key;
                   return (
                     <button
-                      key={option.label}
+                      key={group.key}
                       type="button"
                       className={`rounded-full px-3 py-1 text-xs transition ${
                         active
                           ? 'bg-brand-600 text-white ring-2 ring-brand-300'
                           : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:ring-brand-200'
                       }`}
-                      onClick={() => setWarehouseFilter(option.label)}
+                      onClick={() => setGroupFilterKey(group.key)}
                     >
-                      {option.label}
+                      {groupFilterLabel(group)}
                       <span className={active ? 'text-brand-100' : 'text-slate-400'}>
                         {' '}
-                        · {option.orderCount} заказов
+                        · {group.orderCount} заказов
                       </span>
                     </button>
                   );
