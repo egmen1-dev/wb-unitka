@@ -1,4 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
+import {
+  aggregateFbsPickListForOffice,
+  buildCatalogLookup,
+  listFbsOfficeLabels,
+  officeLabelFromOrder,
+} from '@lib/wb-fbs-assembly.js';
 import { fmtNum } from '../lib/format';
 import { readJsonResponse } from '../lib/http';
 import { downloadFbsPickListCsv } from '../lib/fbs-assembly-export';
@@ -34,6 +40,7 @@ export default function FbsAssemblyPanel({
   const [selectedGroups, setSelectedGroups] = useState(new Set());
   const [query, setQuery] = useState('');
   const [onlyInCatalog, setOnlyInCatalog] = useState(false);
+  const [warehouseFilter, setWarehouseFilter] = useState('');
 
   const catalogRows = useMemo(
     () =>
@@ -76,6 +83,7 @@ export default function FbsAssemblyPanel({
       if (!response.ok) throw new Error(payload.error || 'Не удалось загрузить заказы');
       setData(payload);
       setSelectedGroups(new Set((payload.supplyGroups || []).map((g) => g.key)));
+      setWarehouseFilter('');
       setStatus(`Новых заказов: ${payload.summary?.orderCount ?? 0}`);
     } catch (err) {
       setError(err.message || 'Ошибка загрузки');
@@ -144,8 +152,32 @@ export default function FbsAssemblyPanel({
     }
   }, [token, data, selectedGroups, catalogRows, supplierDigitKeys, loadOrders]);
 
+  const catalogByVendor = useMemo(
+    () => buildCatalogLookup(catalogRows, { supplierDigitKeys }),
+    [catalogRows, supplierDigitKeys]
+  );
+
+  const warehouseOptions = useMemo(() => {
+    if (!data?.orders?.length) return [];
+    const labels = listFbsOfficeLabels(data.orders, data.supplyGroups);
+    return labels.map((label) => ({
+      label,
+      orderCount: data.orders.filter((order) => officeLabelFromOrder(order) === label).length,
+    }));
+  }, [data]);
+
+  const warehousePickList = useMemo(() => {
+    if (!data?.orders?.length) return data?.pickList || [];
+    return aggregateFbsPickListForOffice(
+      data.orders,
+      warehouseFilter,
+      catalogByVendor,
+      supplierDigitKeys
+    );
+  }, [data, warehouseFilter, catalogByVendor, supplierDigitKeys]);
+
   const filteredPickList = useMemo(() => {
-    let list = data?.pickList || [];
+    let list = warehousePickList;
     const q = query.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -158,7 +190,11 @@ export default function FbsAssemblyPanel({
     }
     if (onlyInCatalog) list = list.filter((row) => row.supplierInCatalog);
     return list;
-  }, [data, query, onlyInCatalog]);
+  }, [warehousePickList, query, onlyInCatalog]);
+
+  const csvButtonLabel = warehouseFilter
+    ? `Скачать CSV (${warehouseFilter.length > 28 ? `${warehouseFilter.slice(0, 25)}…` : warehouseFilter})`
+    : 'CSV для поставщика';
 
   const brandGroups = useMemo(() => groupPickListByBrand(filteredPickList), [filteredPickList]);
 
@@ -189,13 +225,16 @@ export default function FbsAssemblyPanel({
           >
             {loading ? 'Загрузка…' : 'Обновить заказы'}
           </button>
-          {data?.pickList?.length ? (
+          {filteredPickList.length || data?.pickList?.length ? (
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => downloadFbsPickListCsv(data.pickList)}
+              disabled={!filteredPickList.length}
+              onClick={() =>
+                downloadFbsPickListCsv(filteredPickList, { warehouseLabel: warehouseFilter })
+              }
             >
-              CSV для поставщика
+              {csvButtonLabel}
             </button>
           ) : null}
           {data?.supplyGroups?.length ? (
@@ -339,7 +378,10 @@ export default function FbsAssemblyPanel({
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h3 className="text-sm font-semibold text-slate-800">Список к сборке</h3>
-              <p className="mt-1 text-xs text-slate-500">Агрегация по артикулу для заказа у поставщика.</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Агрегация по артикулу для заказа у поставщика
+                {warehouseFilter ? ` · склад «${warehouseFilter}»` : ''}.
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -359,6 +401,50 @@ export default function FbsAssemblyPanel({
               </label>
             </div>
           </div>
+
+          {warehouseOptions.length > 1 ? (
+            <div className="mt-3">
+              <p className="text-xs text-slate-500">Склад WB — список и CSV по выбранному складу</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={`rounded-full px-3 py-1 text-xs transition ${
+                    !warehouseFilter
+                      ? 'bg-brand-600 text-white ring-2 ring-brand-300'
+                      : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:ring-brand-200'
+                  }`}
+                  onClick={() => setWarehouseFilter('')}
+                >
+                  Все склады
+                  <span className={!warehouseFilter ? 'text-brand-100' : 'text-slate-400'}>
+                    {' '}
+                    · {data.orders?.length ?? 0} заказов
+                  </span>
+                </button>
+                {warehouseOptions.map((option) => {
+                  const active = warehouseFilter === option.label;
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      className={`rounded-full px-3 py-1 text-xs transition ${
+                        active
+                          ? 'bg-brand-600 text-white ring-2 ring-brand-300'
+                          : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:ring-brand-200'
+                      }`}
+                      onClick={() => setWarehouseFilter(option.label)}
+                    >
+                      {option.label}
+                      <span className={active ? 'text-brand-100' : 'text-slate-400'}>
+                        {' '}
+                        · {option.orderCount} заказов
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           {brandGroups.length > 1 ? (
             <div className="mt-3 flex flex-wrap gap-2">
@@ -386,18 +472,26 @@ export default function FbsAssemblyPanel({
                 </tr>
               </thead>
               <tbody>
-                {filteredPickList.map((row) => (
-                  <tr key={`${row.vendorCode}-${row.nmId}`} className="border-b border-slate-100">
-                    <td className="py-2 pr-3 font-medium text-slate-800">{row.vendorCode}</td>
-                    <td className="py-2 pr-3 tabular-nums text-slate-600">{row.nmId || '—'}</td>
-                    <td className="max-w-xs truncate py-2 pr-3 text-slate-600" title={row.title}>
-                      {row.title || row.brand || '—'}
+                {filteredPickList.length ? (
+                  filteredPickList.map((row) => (
+                    <tr key={`${row.vendorCode}-${row.nmId}`} className="border-b border-slate-100">
+                      <td className="py-2 pr-3 font-medium text-slate-800">{row.vendorCode}</td>
+                      <td className="py-2 pr-3 tabular-nums text-slate-600">{row.nmId || '—'}</td>
+                      <td className="max-w-xs truncate py-2 pr-3 text-slate-600" title={row.title}>
+                        {row.title || row.brand || '—'}
+                      </td>
+                      <td className="py-2 pr-3 text-right tabular-nums font-semibold">{row.qty}</td>
+                      <td className="py-2 pr-3 text-xs text-slate-500">{row.offices}</td>
+                      <td className="py-2 text-xs text-slate-500">{row.cargoTypes}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="py-4 text-center text-sm text-slate-500">
+                      Нет позиций по выбранным фильтрам
                     </td>
-                    <td className="py-2 pr-3 text-right tabular-nums font-semibold">{row.qty}</td>
-                    <td className="py-2 pr-3 text-xs text-slate-500">{row.offices}</td>
-                    <td className="py-2 text-xs text-slate-500">{row.cargoTypes}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
