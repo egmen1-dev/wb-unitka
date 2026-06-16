@@ -1,5 +1,7 @@
 /** Подсказки к метрикам планировщика — формулы из wb-region-supply-plan.js */
 
+import { useEffect, useId, useRef, useState } from 'react';
+
 export const PLANNER_HINTS = {
   kpi: {
     atRiskOrders:
@@ -45,26 +47,88 @@ export const PLANNER_HINTS = {
   },
 };
 
-export function HintIcon({ text, className = '' }) {
+/** Подсказки к блоку «Стратегия поставок» — логика из region-supply-recommendations.js */
+export const STRATEGY_HINTS = {
+  localizationIndex:
+    'ИЛ (индекс локализации) — множитель к литровой логистике FBO. ×1.0 без надбавки; выше — доплата за нелокальные заказы (Ктр по таблице WB).',
+  irp:
+    'ИРП (индекс распределения продаж) — процент от цены товара за низкую долю локальных заказов. Снижается при отгрузке ближе к покупателям.',
+  currentWarehouse:
+    'Склад WB, на который чаще всего отгружаются ваши SKU в таблице. От него считается текущая логистика с учётом ИЛ и ИРП.',
+  target:
+    'Оценка ИЛ и ИРП после отгрузки на рекомендованные региональные склады (топ регионов спроса).',
+  potential:
+    'Разница в ₽/ед. между текущими штрафами ИЛ/ИРП и оценкой после улучшения локализации.',
+};
+
+export function HintIcon({ text, className = '', variant = 'light', placement = 'bottom' }) {
+  const [visible, setVisible] = useState(false);
+  const wrapRef = useRef(null);
+  const id = useId();
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    const onDoc = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setVisible(false);
+      }
+    };
+    document.addEventListener('pointerdown', onDoc);
+    return () => document.removeEventListener('pointerdown', onDoc);
+  }, [visible]);
+
   if (!text) return null;
+
+  const isDark = variant === 'onDark';
+  const btnCls = isDark
+    ? 'border-white/40 text-white/70 hover:border-white/60 hover:text-white'
+    : 'border-slate-300 text-slate-400 hover:border-slate-400 hover:text-slate-600';
+
+  const tipCls =
+    placement === 'top'
+      ? 'bottom-full left-1/2 mb-1.5 -translate-x-1/2'
+      : 'top-full left-1/2 mt-1.5 -translate-x-1/2';
+
   return (
     <span
-      className={`ml-1 inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-slate-300 text-[9px] font-bold leading-none text-slate-400 hover:border-slate-400 hover:text-slate-600 ${className}`}
-      title={text}
-      aria-label={text}
-      role="img"
+      ref={wrapRef}
+      className={`relative inline-flex align-middle ${className}`}
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
     >
-      ?
+      <button
+        type="button"
+        className={`inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border text-[9px] font-bold leading-none focus:outline-none focus:ring-1 focus:ring-brand-400 ${btnCls}`}
+        aria-label="Показать подсказку"
+        aria-describedby={visible ? id : undefined}
+        aria-expanded={visible}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setVisible((v) => !v);
+        }}
+      >
+        ?
+      </button>
+      {visible ? (
+        <span
+          id={id}
+          role="tooltip"
+          className={`absolute z-[100] w-56 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left text-[11px] font-normal normal-case leading-snug tracking-normal text-slate-600 shadow-lg ${tipCls}`}
+        >
+          {text}
+        </span>
+      ) : null}
     </span>
   );
 }
 
 export function ThHint({ children, hint, className = '' }) {
   return (
-    <th className={`px-4 py-2 font-medium ${className}`} title={hint || undefined}>
+    <th className={`px-4 py-2 font-medium ${className}`}>
       <span className="inline-flex items-center gap-0.5">
         {children}
-        {hint ? <HintIcon text={hint} className="ml-0.5" /> : null}
+        {hint ? <HintIcon text={hint} placement="bottom" className="ml-0.5" /> : null}
       </span>
     </th>
   );
@@ -87,7 +151,7 @@ export function TabDescription({ hint }) {
   if (!hint) return null;
   return (
     <p className="mt-3 flex items-start gap-1.5 text-xs text-slate-500">
-      <HintIcon text={hint} className="mt-0.5" />
+      <HintIcon text={hint} className="mt-0.5 shrink-0" />
       <span>{hint}</span>
     </p>
   );
