@@ -47,17 +47,17 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
     : '30 дней';
 
   const tariffCtx = useMemo(
-    () => resolveRegionTariffContext(tariffCache, rows, settings),
-    [tariffCache, rows, settings]
+    () => resolveRegionTariffContext(tariffCache, rows, settings, meta),
+    [tariffCache, rows, settings, meta]
   );
 
   const snapshot = useMemo(
     () =>
       enrichRegionDemandSnapshot(meta?.regionSalesSnapshot || null, {
         tariffList: tariffCtx.tariffList,
-        cargoType: tariffCtx.cargoType,
+        cargoType: tariffCtx.warehouseCargoType,
       }),
-    [meta?.regionSalesSnapshot, tariffCtx.tariffList, tariffCtx.cargoType]
+    [meta?.regionSalesSnapshot, tariffCtx.tariffList, tariffCtx.warehouseCargoType]
   );
 
   const supplyPlan = useMemo(
