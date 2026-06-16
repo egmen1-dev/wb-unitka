@@ -29,11 +29,16 @@ const MONEY_KEYS = new Set([
   'manualExtraCosts',
   'profitFbo',
   'profitFbs',
+  'draftSalePrice',
+  'draftProfitFbo',
+  'draftProfitFbs',
 ]);
 
 const PCT_KEYS = new Set([
   'marginFbo',
   'marginFbs',
+  'draftMarginFbo',
+  'draftMarginFbs',
   'discountPct',
   'sppPct',
   'fbsDeliverySurcharge',
@@ -48,6 +53,9 @@ const CORE_COLUMN_KEYS = new Set([
   'fbsAvgDeliveryHours',
   'purchasePrice',
   'salePrice',
+  'draftSalePrice',
+  'draftProfitFbs',
+  'draftMarginFbs',
   'packagingCost',
   'processingRub',
   'manualExtraCosts',
@@ -74,6 +82,16 @@ const COLUMNS = [
   { key: 'basePrice', label: 'Базовая' },
   { key: 'ourPrice', label: 'Наша цена' },
   { key: 'salePrice', label: 'Продажа' },
+  {
+    key: 'draftSalePrice',
+    label: 'Цена (черновик)',
+    overrideField: 'draftSalePrice',
+    hint: 'Предварительная цена для расчёта маржи · не меняет цену на WB',
+  },
+  { key: 'draftProfitFbo', label: 'Прибыль FBO*', sortable: true, hint: 'Прибыль FBO при черновой цене' },
+  { key: 'draftMarginFbo', label: 'Маржа FBO*', sortable: true, hint: 'Маржа FBO при черновой цене' },
+  { key: 'draftProfitFbs', label: 'Прибыль FBS*', sortable: true, hint: 'Прибыль FBS при черновой цене' },
+  { key: 'draftMarginFbs', label: 'Маржа FBS*', sortable: true, hint: 'Маржа FBS при черновой цене' },
   { key: 'discountPct', label: 'Скидка' },
   { key: 'sppPct', label: 'СПП' },
   { key: 'volumeLiters', label: 'Объём, л', hint: '≤1 л: фикс. тариф 23–32₽ × коэфф.' },
@@ -396,7 +414,7 @@ function ProductsTable({
     const override = getProductOverride(productOverrides, vendor);
     const field = col.overrideField;
     const value = override[field] != null ? override[field] : '';
-    const current = row[col.key];
+    const current = field === 'draftSalePrice' ? row.salePrice : row[col.key];
 
     return (
       <input
@@ -404,8 +422,24 @@ function ProductsTable({
         type="number"
         min="0"
         step="0.01"
-        placeholder={current != null ? String(Number(current).toFixed(2)) : 'авто'}
-        title={value !== '' ? `Ручная правка · авто ${fmtMoney(current)}` : `Авто: ${fmtMoney(current)}`}
+        placeholder={
+          field === 'draftSalePrice'
+            ? row.salePrice != null
+              ? String(Number(row.salePrice).toFixed(0))
+              : '—'
+            : current != null
+              ? String(Number(current).toFixed(2))
+              : 'авто'
+        }
+        title={
+          field === 'draftSalePrice'
+            ? value !== ''
+              ? `Черновая цена ${fmtMoney(value)} · текущая продажа ${fmtMoney(row.salePrice)}`
+              : `Черновая цена для расчёта маржи · текущая продажа ${fmtMoney(row.salePrice)}`
+            : value !== ''
+              ? `Ручная правка · авто ${fmtMoney(current)}`
+              : `Авто: ${fmtMoney(current)}`
+        }
         value={value}
         onChange={(e) => onProductOverrideChange(vendor, field, e.target.value)}
       />
@@ -420,7 +454,7 @@ function ProductsTable({
             <h2 className="text-sm font-semibold text-slate-800">Товары</h2>
             <p className="mt-1 text-xs text-slate-500">
               {filtered.length} из {rows.length}. Жёлтая рамка — ручная правка закупки, упаковки, обработки, доп.
-              расходов. Красная ячейка — маржа &lt; 5%.
+              расходов и черновой цены. Красная ячейка — маржа &lt; 5%.
               {query.trim() ? (
                 <>
                   {' '}
@@ -566,9 +600,19 @@ function ProductsTable({
 
                   const raw = row[col.key];
                   let className = 'text-slate-700';
-                  if (col.key === 'marginFbo' || col.key === 'marginFbs') {
+                  if (
+                    col.key === 'marginFbo' ||
+                    col.key === 'marginFbs' ||
+                    col.key === 'draftMarginFbo' ||
+                    col.key === 'draftMarginFbs'
+                  ) {
                     className = marginClass(raw);
-                  } else if (col.key === 'profitFbo' || col.key === 'profitFbs') {
+                  } else if (
+                    col.key === 'profitFbo' ||
+                    col.key === 'profitFbs' ||
+                    col.key === 'draftProfitFbo' ||
+                    col.key === 'draftProfitFbs'
+                  ) {
                     className = profitClass(raw);
                   }
 

@@ -1,4 +1,4 @@
-export const OVERRIDE_FIELDS = ['packagingCost', 'processingCost', 'extraCosts'];
+export const OVERRIDE_FIELDS = ['packagingCost', 'processingCost', 'extraCosts', 'draftSalePrice'];
 
 export function getProductOverride(overrides, vendorCode) {
   if (!vendorCode) return {};

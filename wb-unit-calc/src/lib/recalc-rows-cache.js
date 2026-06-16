@@ -36,7 +36,43 @@ function buildRowSig(row) {
 
 function overrideSig(overrides, vendor) {
   const o = getProductOverride(overrides, vendor);
-  return `${o.packagingCost ?? ''}\x1f${o.processingCost ?? ''}\x1f${o.extraCosts ?? ''}`;
+  return `${o.packagingCost ?? ''}\x1f${o.processingCost ?? ''}\x1f${o.extraCosts ?? ''}\x1f${o.draftSalePrice ?? ''}`;
+}
+
+function applyDraftEconomics(calc, calcInput, settings, productOverrides, vendor) {
+  const draftRaw = getProductOverride(productOverrides, vendor).draftSalePrice;
+  if (draftRaw == null || draftRaw === '') {
+    return {
+      ...calc,
+      draftSalePrice: null,
+      draftProfitFbo: null,
+      draftProfitFbs: null,
+      draftMarginFbo: null,
+      draftMarginFbs: null,
+    };
+  }
+
+  const draftPrice = Number(draftRaw);
+  if (!Number.isFinite(draftPrice) || draftPrice <= 0) {
+    return {
+      ...calc,
+      draftSalePrice: null,
+      draftProfitFbo: null,
+      draftProfitFbs: null,
+      draftMarginFbo: null,
+      draftMarginFbs: null,
+    };
+  }
+
+  const draftCalc = calculateUnitEconomicsRow({ ...calcInput, salePrice: draftPrice }, settings);
+  return {
+    ...calc,
+    draftSalePrice: draftPrice,
+    draftProfitFbo: draftCalc.profitFbo,
+    draftProfitFbs: draftCalc.profitFbs,
+    draftMarginFbo: draftCalc.marginFbo,
+    draftMarginFbs: draftCalc.marginFbs,
+  };
 }
 
 function purchasePriceFor(row, purchases) {
@@ -69,9 +105,13 @@ export function createRecalcRows() {
         continue;
       }
 
-      const calc = calculateUnitEconomicsRow(
-        mergeRowOverrides(rowToCalculatorInput(row, purchasePrice), productOverrides),
-        settings
+      const calcInput = mergeRowOverrides(rowToCalculatorInput(row, purchasePrice), productOverrides);
+      const calc = applyDraftEconomics(
+        calculateUnitEconomicsRow(calcInput, settings),
+        calcInput,
+        settings,
+        productOverrides,
+        vendor
       );
       byNm.set(nmId, { key, calc });
       out[i] = calc;
