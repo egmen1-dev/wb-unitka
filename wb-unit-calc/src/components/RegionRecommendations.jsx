@@ -1,4 +1,5 @@
 import { fmtMoney, fmtNum, fmtPct } from '../lib/format';
+import { formatWarehouseCoeffPercent } from '@lib/region-supply-recommendations.js';
 
 function IndexGauge({ label, value, suffix, sub, tone = 'brand' }) {
   const tones = {
@@ -43,15 +44,16 @@ function VerdictBadge({ verdict }) {
   );
 }
 
-function WarehouseBadge({ coeff }) {
+function WarehouseBadge({ coeff, synthetic = false }) {
   const n = Number(coeff) || 0;
   let cls = 'bg-slate-100 text-slate-700';
   if (n > 0 && n <= 1.4) cls = 'bg-emerald-100 text-emerald-800';
   else if (n > 1.4 && n <= 1.9) cls = 'bg-amber-100 text-amber-800';
   else if (n > 1.9) cls = 'bg-rose-100 text-rose-800';
   return (
-    <span className={`inline-flex rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${cls}`}>
-      коэфф. {n.toFixed(2)}
+    <span className={`inline-flex flex-col gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${cls}`}>
+      <span>{formatWarehouseCoeffPercent(n)}</span>
+      {synthetic ? <span className="font-normal opacity-70">оценка</span> : null}
     </span>
   );
 }
@@ -73,7 +75,7 @@ function ActionCard({ action, rank }) {
             нелокально
           </span>
         )}
-        <WarehouseBadge coeff={action.warehouseCoeff} />
+        <WarehouseBadge coeff={action.warehouseCoeff} synthetic={action.isSynthetic} />
       </div>
 
       <h3 className="relative mt-3 text-sm font-semibold text-slate-900">
@@ -133,15 +135,20 @@ export default function RegionRecommendations({ plan }) {
               Куда везти товар с учётом коэфф. складов, ИЛ и ИРП
             </h2>
             <p className="mt-2 text-sm text-brand-100/90">
-              Сравниваем не только тариф склада, но и надбавки WB за нелокальные продажи. Тарифы
-              складов — МГТ (короб), как на{' '}
-              <span className="underline decoration-brand-200/60">странице delivery WB</span>.
-              Склады СГТ для вашей матрицы не предлагаем.
+              Коэфф. складов — из API WB <code className="rounded bg-white/10 px-1">tariffs/box</code>{' '}
+              (как на странице delivery, в %). В ₽/ед. учтены ИЛ и ИРП вашего кабинета.
             </p>
             {plan.cargoTypeLabel ? (
-              <p className="mt-2 inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white">
-                Тип матрицы: {plan.cargoTypeLabel}
-                {plan.hasTariffs ? ' · тарифы WB' : ' · оценка по справочнику'}
+              <p className="mt-2 inline-flex flex-wrap items-center gap-2">
+                <span className="inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white">
+                  Тип матрицы: {plan.cargoTypeLabel}
+                </span>
+                <span className="inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white">
+                  {plan.hasTariffs
+                    ? `Тарифы WB${plan.tariffCacheDate ? ` · ${new Date(plan.tariffCacheDate).toLocaleDateString('ru-RU')}` : ''}`
+                    : 'Нет тарифов в кэше — нажмите «Быстро»'}
+                  {plan.tariffCacheStale ? ' · устарели' : ''}
+                </span>
               </p>
             ) : null}
           </div>
@@ -239,8 +246,9 @@ export default function RegionRecommendations({ plan }) {
           <div className="border-b border-slate-200 bg-slate-50/80 px-4 py-3">
             <h3 className="text-sm font-semibold text-slate-800">План поставок по складам</h3>
             <p className="text-xs text-slate-500">
-              Суммарный спрос по регионам · ориентир на 30 дней
-              {!hasTariffs ? ' · тарифы WB из кэша, обновите синхронизацию для точности' : ''}
+              Суммарный спрос по регионам · ориентир на 30 дней · ИЛ/ИРП из настроек кабинета
+              {!plan.hasTariffs ? ' · обновите синхронизацию для точных коэфф. складов' : ''}
+              {plan.tariffCacheStale ? ' · тарифы старше 6 ч' : ''}
             </p>
           </div>
           <div className="overflow-auto">
@@ -249,6 +257,9 @@ export default function RegionRecommendations({ plan }) {
                 <tr>
                   <th className="px-4 py-2 font-medium">Склад WB</th>
                   <th className="px-4 py-2 font-medium">Коэфф.</th>
+                  <th className="px-4 py-2 font-medium">ИЛ</th>
+                  <th className="px-4 py-2 font-medium">ИРП</th>
+                  <th className="px-4 py-2 font-medium">База ₽</th>
                   <th className="px-4 py-2 font-medium">Заказы</th>
                   <th className="px-4 py-2 font-medium">Доля плана</th>
                   <th className="px-4 py-2 font-medium">₽/ед.</th>
@@ -261,7 +272,25 @@ export default function RegionRecommendations({ plan }) {
                   <tr key={row.warehouseName} className="border-t border-slate-100 hover:bg-brand-50/30">
                     <td className="px-4 py-3 font-semibold text-slate-800">{row.warehouseName}</td>
                     <td className="px-4 py-3">
-                      <WarehouseBadge coeff={row.warehouseCoeff} />
+                      <WarehouseBadge coeff={row.warehouseCoeff} synthetic={row.isSynthetic} />
+                    </td>
+                    <td className="px-4 py-3 tabular-nums text-slate-700">
+                      <span title="Текущий индекс локализации">×{row.ilMultiplier?.toFixed(2) ?? '—'}</span>
+                      {row.projectedIl != null && row.projectedIl !== row.ilMultiplier ? (
+                        <span className="block text-[10px] text-emerald-700">→ ×{row.projectedIl}</span>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3 tabular-nums text-slate-700">
+                      <span>{row.irpPct != null ? `${row.irpPct.toFixed(2)}%` : '—'}</span>
+                      {row.irpSurchargePerUnit > 0 ? (
+                        <span className="block text-[10px] text-slate-500">+{fmtMoney(row.irpSurchargePerUnit)}</span>
+                      ) : null}
+                      {row.projectedIrp != null && row.projectedIrp !== row.irpPct ? (
+                        <span className="block text-[10px] text-emerald-700">→ {row.projectedIrp}%</span>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3 tabular-nums text-slate-600">
+                      {row.baseForwardPerUnit != null ? fmtMoney(row.baseForwardPerUnit) : '—'}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-700">{fmtNum(row.totalQty, 0)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-600">{fmtPct(row.sharePct)}</td>

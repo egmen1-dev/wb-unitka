@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { buildRegionSupplyRecommendations } from '@lib/region-supply-recommendations.js';
+import { buildRegionSupplyRecommendations, formatWarehouseCoeffPercent } from '@lib/region-supply-recommendations.js';
 import { fmtMoney, fmtNum, fmtPct } from '../lib/format';
 import { regionEmptyMessage, regionSourceLabel } from '../lib/region-empty-message';
 import RegionRecommendations from './RegionRecommendations';
@@ -152,7 +152,7 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
             value={topAction?.warehouseName || topRegion?.suggestedWarehouses?.[0] || '—'}
             sub={
               topAction
-                ? `коэфф. ${topAction.warehouseCoeff?.toFixed(2)} · ${fmtMoney(topAction.costPerUnit)}/ед.`
+                ? `${formatWarehouseCoeffPercent(topAction.warehouseCoeff)} · ${fmtMoney(topAction.costPerUnit)}/ед.`
                 : 'См. рекомендации выше'
             }
           />
@@ -233,7 +233,7 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
                           (item.suggestedWarehouses || []).slice(0, 2).join(', ') || '—'
                         )}
                         {action?.warehouseCoeff ? (
-                          <span className="ml-1 text-slate-400">×{action.warehouseCoeff.toFixed(2)}</span>
+                          <span className="ml-1 text-slate-400">{formatWarehouseCoeffPercent(action.warehouseCoeff)}</span>
                         ) : null}
                       </td>
                     ) : null}
