@@ -785,6 +785,8 @@ export default function App() {
         ordersError: data.ordersError ?? prev.ordersError,
         tariffsWarehouseCount: data.tariffsWarehouseCount ?? prev.tariffsWarehouseCount,
         tariffsDefaultWarehouse: data.tariffsDefaultWarehouse ?? prev.tariffsDefaultWarehouse,
+        matrixCargoType: data.matrixCargoType ?? prev.matrixCargoType,
+        tariffSource: data.tariffSource ?? prev.tariffSource,
         fbsShipmentWarehouse: data.fbsShipmentWarehouse ?? prev.fbsShipmentWarehouse,
         fbsShipmentSource: data.fbsShipmentSource ?? prev.fbsShipmentSource,
         fbsShipmentOrders: data.fbsShipmentOrders ?? prev.fbsShipmentOrders,
