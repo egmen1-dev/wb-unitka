@@ -62,6 +62,7 @@ import {
   classifyWbCargoType,
   filterTariffsForCargoType,
   resolveMatrixCargoType,
+  resolveWarehouseSuggestionCargoType,
   warehouseAcceptsCargoType,
 } from '../../lib/wb-cargo-type.js';
 
@@ -651,11 +652,12 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
 
     const catalogNmIds = new Set(products.map((p) => Number(p.nmId)).filter(Boolean));
     const matrixCargoType = resolveMatrixCargoType(products);
-    const mgtTariffList = filterTariffsForCargoType([...tariffByName.values()], matrixCargoType);
+    const warehouseCargoType = resolveWarehouseSuggestionCargoType(products, { matrixCargoType });
+    const warehouseTariffList = filterTariffsForCargoType([...tariffByName.values()], warehouseCargoType);
     let regionDemand = buildRegionDemandSnapshot(regionSalesResult.report, {
       catalogNmIds,
-      tariffList: mgtTariffList,
-      cargoType: matrixCargoType,
+      tariffList: warehouseTariffList,
+      cargoType: warehouseCargoType,
     });
     if (
       regionDemand.totalQty === 0 &&
@@ -664,8 +666,8 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
     ) {
       regionDemand = buildRegionDemandSnapshot(regionSalesResult.report, {
         catalogNmIds: null,
-        tariffList: mgtTariffList,
-        cargoType: matrixCargoType,
+        tariffList: warehouseTariffList,
+        cargoType: warehouseCargoType,
       });
     }
 

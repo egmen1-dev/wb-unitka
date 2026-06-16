@@ -4,7 +4,7 @@ import {
   formatWarehouseCoeffPercent,
   resolveRegionTariffContext,
 } from '@lib/region-supply-recommendations.js';
-import { enrichRegionDemandSnapshot } from '@lib/wb-region-sales.js';
+import { enrichRegionDemandSnapshot, isFederalDistrictLabel } from '@lib/wb-region-sales.js';
 import { fmtMoney, fmtNum, fmtPct } from '../lib/format';
 import { regionEmptyMessage, regionSourceLabel } from '../lib/region-empty-message';
 import RegionRecommendations from './RegionRecommendations';
@@ -36,6 +36,10 @@ function ShareBar({ sharePct }) {
       <span className="text-xs tabular-nums text-slate-600">{fmtPct(sharePct)}</span>
     </div>
   );
+}
+
+function filterWarehouseLabels(names = []) {
+  return names.filter((name) => name && !isFederalDistrictLabel(name));
 }
 
 export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tariffCache = null }) {
@@ -92,7 +96,12 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
     if (!snapshot) return [];
     if (view === 'fo') return snapshot.byFo || [];
     if (view === 'city') return snapshot.byCity || [];
-    if (view === 'warehouse') return snapshot.warehouses || [];
+    if (view === 'warehouse') {
+      return (snapshot.warehouses || []).filter((item) => {
+        const name = item.label || item.warehouseName || '';
+        return name && !isFederalDistrictLabel(name);
+      });
+    }
     return snapshot.byRegion || [];
   }, [snapshot, view]);
 
@@ -166,7 +175,11 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
           />
           <Kpi
             label="Приоритет поставки"
-            value={topAction?.warehouseName || topRegion?.suggestedWarehouses?.[0] || '—'}
+            value={
+              topAction?.warehouseName && !isFederalDistrictLabel(topAction.warehouseName)
+                ? topAction.warehouseName
+                : filterWarehouseLabels(topRegion?.suggestedWarehouses)[0] || '—'
+            }
             sub={
               topAction
                 ? `${formatWarehouseCoeffPercent(topAction.warehouseCoeff)} · ${fmtMoney(topAction.costPerUnit)}/ед.`
@@ -246,12 +259,12 @@ export default function RegionsPanel({ rows = [], meta = {}, settings = {}, tari
                     ) : null}
                     {view === 'region' ? (
                       <td className="px-4 py-2 text-slate-700">
-                        {action ? (
+                        {action?.warehouseName && !isFederalDistrictLabel(action.warehouseName) ? (
                           <span className="font-medium text-brand-700">{action.warehouseName}</span>
                         ) : (
-                          (item.suggestedWarehouses || []).slice(0, 2).join(', ') || '—'
+                          filterWarehouseLabels(item.suggestedWarehouses).slice(0, 2).join(', ') || '—'
                         )}
-                        {action?.warehouseCoeff ? (
+                        {action?.warehouseCoeff && action?.warehouseName && !isFederalDistrictLabel(action.warehouseName) ? (
                           <span className="ml-1 text-slate-400">{formatWarehouseCoeffPercent(action.warehouseCoeff)}</span>
                         ) : null}
                       </td>
