@@ -71,7 +71,8 @@ export default async function handler(req, res) {
 
     const purchaseOverrides = req.body?.purchaseOverrides || {};
 
-    let supplierIndex = null;    let supplierMeta = null;
+    let supplierIndex = null;
+    let supplierMeta = null;
 
     if (req.body?.supplierCatalog?.byDigitKey) {
       supplierIndex = deserializeSupplierIndex(req.body.supplierCatalog);
