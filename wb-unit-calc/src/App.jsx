@@ -10,6 +10,7 @@ import SummaryDashboard from './components/SummaryDashboard';
 import LogisticsReconcilePanel from './components/LogisticsReconcilePanel';
 import ActualPnlPanel from './components/ActualPnlPanel';
 import RegionsPanel from './components/RegionsPanel';
+import ReturnsPanel from './components/ReturnsPanel';
 import SupplierPricePanel from './components/SupplierPricePanel';
 import TeamPanel from './components/TeamPanel';
 import TeamPermissionsPanel from './components/TeamPermissionsPanel';
@@ -825,6 +826,7 @@ export default function App() {
         logisticsIndicesSkuCount: data.logisticsIndicesSkuCount ?? prev.logisticsIndicesSkuCount,
         logisticsIndicesError: data.logisticsIndicesError ?? prev.logisticsIndicesError,
         avgLocalizationSharePct: data.avgLocalizationSharePct ?? prev.avgLocalizationSharePct,
+        localizationByNmId: data.localizationByNmId ?? prev.localizationByNmId,
         };
       });
       if (data.localizationIndex != null) {
@@ -1507,10 +1509,26 @@ export default function App() {
             meta={meta}
             settings={settings}
             tariffCache={wbProductCache?.tariffCache || null}
+            onSettingsChange={setSettings}
           />
         ) : (
           <SectionAccessDenied
             title="Раздел «Регионы» недоступен"
+            onBack={() => changeSection(firstAllowedSection(myPermissions))}
+          />
+        )
+      ) : null}
+
+      {section === 'returns' ? (
+        canAccessSection('returns', myPermissions) || !team ? (
+          <ReturnsPanel
+            rows={rows}
+            meta={meta}
+            realizationSnapshot={wbProductCache?.realizationSnapshot || null}
+          />
+        ) : (
+          <SectionAccessDenied
+            title="Раздел «Возвраты» недоступен"
             onBack={() => changeSection(firstAllowedSection(myPermissions))}
           />
         )
