@@ -752,6 +752,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       logisticsIndicesOrderCount: logisticsIndices?.totalOrders ?? 0,
       logisticsIndicesSkuCount: logisticsIndices?.skuCount ?? 0,
       avgLocalizationSharePct: logisticsIndices?.avgLocalizationSharePct ?? null,
+      localizationByNmId: logisticsIndices?.localizationByNmId ?? null,
       logisticsIndicesError: logisticsIndices?.error ?? null,
       tariffCache,
       products,
