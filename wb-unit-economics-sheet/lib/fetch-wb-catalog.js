@@ -285,6 +285,10 @@ function buildProduct(staticInfo, dims, ctx) {
     skus: staticInfo.skus || [],
     stockFbo: fboStockDetail.total ?? staticInfo.stockFbo ?? 0,
     stockFbs: fbsStock.stock ?? staticInfo.stockFbs ?? 0,
+    fboStockByWarehouse: (fboStockDetail.warehouses || []).map((w) => ({
+      name: w.name,
+      qty: w.qty,
+    })),
     fboWarehouseName: warehouseTariffs.fboWarehouseName,
     fbsWarehouseName: warehouseTariffs.fbsWarehouseName,
     orders7d:
