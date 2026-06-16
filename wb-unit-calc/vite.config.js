@@ -13,6 +13,7 @@ const API_ROUTES = {
   '/api/unit-calc/sync': () => import('../api/unit-calc/sync.js'),
   '/api/unit-calc/workspace': () => import('../api/unit-calc/workspace.js'),
   '/api/unit-calc/supplier-price': () => import('../api/unit-calc/supplier-price.js'),
+  '/api/unit-calc/fbs-assembly': () => import('../api/unit-calc/fbs-assembly.js'),
 };
 
 function unitCalcApiPlugin() {
