@@ -6,6 +6,9 @@
   "functions": {
     "../api/unit-calc/sync.js": {
       "maxDuration": 120
+    },
+    "../api/unit-calc/fbs-assembly.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

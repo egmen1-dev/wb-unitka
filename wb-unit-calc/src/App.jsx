@@ -11,6 +11,7 @@ import LogisticsReconcilePanel from './components/LogisticsReconcilePanel';
 import ActualPnlPanel from './components/ActualPnlPanel';
 import RegionsPanel from './components/RegionsPanel';
 import ReturnsPanel from './components/ReturnsPanel';
+import FbsAssemblyPanel from './components/FbsAssemblyPanel';
 import SupplierPricePanel from './components/SupplierPricePanel';
 import TeamPanel from './components/TeamPanel';
 import TeamPermissionsPanel from './components/TeamPermissionsPanel';
@@ -1497,6 +1498,22 @@ export default function App() {
         ) : (
           <SectionAccessDenied
             title="Раздел «Расчёты» недоступен"
+            onBack={() => changeSection(firstAllowedSection(myPermissions))}
+          />
+        )
+      ) : null}
+
+      {section === 'fbs' ? (
+        canAccessSection('fbs', myPermissions) || !team ? (
+          <FbsAssemblyPanel
+            token={activeProfile?.token}
+            rows={rows}
+            activeCatalog={activeCatalog}
+            hasApiKey={Boolean(activeProfile?.token)}
+          />
+        ) : (
+          <SectionAccessDenied
+            title="Раздел «FBS» недоступен"
             onBack={() => changeSection(firstAllowedSection(myPermissions))}
           />
         )

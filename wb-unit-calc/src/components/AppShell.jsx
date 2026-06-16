@@ -4,6 +4,7 @@ import { canAccessSection } from '@lib/team-permissions.js';
 
 const NAV = [
   { id: 'calc', label: 'Расчёты', hint: 'Таблица и сводка' },
+  { id: 'fbs', label: 'FBS', hint: 'Сборка заказов и поставки' },
   { id: 'regions', label: 'Регионы', hint: 'Спрос по городам и складам' },
   { id: 'returns', label: 'Возвраты', hint: 'Факт возвратов и обратная логистика' },
   { id: 'logistics', label: 'Логистика', hint: 'Сверка расчёта с отчётом WB' },
@@ -20,6 +21,13 @@ function NavIcon({ id }) {
     return (
       <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M3 14h18M8 6v12M16 6v12" />
+      </svg>
+    );
+  }
+  if (id === 'fbs') {
+    return (
+      <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
       </svg>
     );
   }
