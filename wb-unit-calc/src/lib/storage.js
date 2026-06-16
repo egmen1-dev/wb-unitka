@@ -100,17 +100,26 @@ export function createProfileId() {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-/** Локальный boot-кэш без тяжёлого wbProductCache (восстанавливается из rows). */
+/** Локальный boot-кэш без тяжёлого productCache (карточки восстанавливаются из rows). */
 function slimPayloadForLocalCache(payload) {
   if (!payload) return payload;
   const cache = payload.cache;
   if (!cache) return payload;
+  const wb = cache.wbProductCache;
+  const liteWb =
+    wb?.tariffCache || wb?.realizationSnapshot
+      ? {
+          tariffCache: wb.tariffCache || null,
+          realizationSnapshot: wb.realizationSnapshot || null,
+        }
+      : null;
   return {
     ...payload,
     cache: {
       rows: cache.rows,
       meta: cache.meta,
       syncedAt: cache.syncedAt,
+      wbProductCache: liteWb,
     },
   };
 }

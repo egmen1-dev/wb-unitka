@@ -226,7 +226,13 @@ function applyWorkspacePayload(payload, setters, { keepRows = [], keepProfiles =
     if (payload.cache.wbProductCache?.products?.length) {
       setters.setWbProductCache(payload.cache.wbProductCache);
     } else {
-      const bootstrapped = buildEffectiveWbCache(null, cloudRows, payload.cache.syncedAt);
+      const bootstrapped = buildEffectiveWbCache(
+        payload.cache.wbProductCache?.tariffCache || payload.cache.wbProductCache?.realizationSnapshot
+          ? payload.cache.wbProductCache
+          : null,
+        cloudRows,
+        payload.cache.syncedAt
+      );
       setters.setWbProductCache(bootstrapped);
     }
   } else if (!keepRows?.length && payload.cache === null) {
@@ -312,14 +318,18 @@ export default function App() {
   const [syncedAt, setSyncedAt] = useState(() => bootPayload?.cache?.syncedAt || '');
   const [meta, setMeta] = useState(() => bootPayload?.cache?.meta || {});
   const [wbProductCache, setWbProductCache] = useState(() => {
-    if (bootPayload?.cache?.wbProductCache?.products?.length) {
-      return bootPayload.cache.wbProductCache;
-    }
-    const local = loadWbProductCache();
-    if (local?.products?.length) return local;
+    const bootWb = bootPayload?.cache?.wbProductCache;
+    if (bootWb?.products?.length) return bootWb;
     const rows = bootPayload?.cache?.rows;
-    if (rows?.length) {
-      return buildEffectiveWbCache(null, rows, bootPayload?.cache?.syncedAt);
+    const local = loadWbProductCache();
+    const liteOrLocal =
+      bootWb?.tariffCache || bootWb?.realizationSnapshot
+        ? bootWb
+        : local?.products?.length || local?.tariffCache
+          ? local
+          : null;
+    if (liteOrLocal || rows?.length) {
+      return buildEffectiveWbCache(liteOrLocal, rows, bootPayload?.cache?.syncedAt);
     }
     return null;
   });
@@ -605,16 +615,23 @@ export default function App() {
       if (bootPayload?.cache?.rows?.length) {
         skipCloudSave.current = false;
         suppressAutoSyncRef.current = true;
-        setCloudRefreshing(true);
-        refreshTeamWorkspace(candidate, {
-          ifUnchangedSince: boot.cache?.updatedAt || workspaceUpdatedAt || '',
-        })
-          .catch((err) => {
-            if (!err.needsTeam) {
-              setCloudStatus('Облако недоступно — показаны локальные данные');
-            }
+        const runCloudRefresh = () => {
+          setCloudRefreshing(true);
+          refreshTeamWorkspace(candidate, {
+            ifUnchangedSince: boot.cache?.updatedAt || workspaceUpdatedAt || '',
           })
-          .finally(() => setCloudRefreshing(false));
+            .catch((err) => {
+              if (!err.needsTeam) {
+                setCloudStatus('Облако недоступно — показаны локальные данные');
+              }
+            })
+            .finally(() => setCloudRefreshing(false));
+        };
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(runCloudRefresh, { timeout: 4000 });
+        } else {
+          setTimeout(runCloudRefresh, 300);
+        }
         return;
       }
 

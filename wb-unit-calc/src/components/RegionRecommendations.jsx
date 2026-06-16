@@ -146,7 +146,9 @@ export default function RegionRecommendations({ plan }) {
                 <span className="inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white">
                   {plan.hasTariffs
                     ? `Тарифы WB${plan.tariffCacheDate ? ` · ${new Date(plan.tariffCacheDate).toLocaleDateString('ru-RU')}` : ''}`
-                    : 'Нет тарифов в кэше — нажмите «Быстро»'}
+                    : plan.tariffFromRows
+                      ? 'Коэфф. из таблицы — нажмите «Быстро» для тарифов WB'
+                      : 'Нет тарифов в кэше — нажмите «Быстро»'}
                   {plan.tariffCacheStale ? ' · устарели' : ''}
                 </span>
               </p>
