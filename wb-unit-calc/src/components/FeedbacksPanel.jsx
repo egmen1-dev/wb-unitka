@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { fmtMoney } from '../lib/format';
 import { readJsonResponse } from '../lib/http';
 
 function TabDescription({ children }) {
@@ -30,6 +31,94 @@ function formatDate(iso) {
   }
 }
 
+function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
+  if (!feedback || !draft) return null;
+
+  const upsell = draft.premiumUpsell || draft.alternative;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-4 sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="preview-title"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b border-slate-100 px-5 py-4">
+          <h3 id="preview-title" className="text-sm font-semibold text-slate-800">
+            Предпросмотр ответа
+          </h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Так ответ увидит покупатель на WB после модерации
+          </p>
+        </div>
+
+        <div className="space-y-4 px-5 py-4">
+          <div className="rounded-lg bg-slate-50 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Stars rating={feedback.rating} />
+              <span className="text-xs text-slate-500">{formatDate(feedback.createdDate)}</span>
+            </div>
+            <p className="mt-1 text-xs font-medium text-slate-700">
+              {feedback.productName}
+              {feedback.article ? ` · арт. ${feedback.article}` : ''}
+            </p>
+            {feedback.text ? (
+              <p className="mt-2 text-xs text-slate-600 italic">«{feedback.text}»</p>
+            ) : null}
+          </div>
+
+          <div className="rounded-lg border border-brand-200 bg-brand-50/50 px-4 py-3">
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">{draft.text}</p>
+          </div>
+
+          {upsell?.article ? (
+            <div className="rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs text-slate-600">
+              <p className="font-medium text-slate-700">Рекомендованный SKU</p>
+              <p className="mt-1">
+                арт. <span className="font-mono">{upsell.article}</span> — {upsell.title}
+              </p>
+              {upsell.priceLabel || upsell.price ? (
+                <p className="mt-0.5 text-slate-500">
+                  {upsell.priceLabel || fmtMoney(upsell.price)}
+                  {upsell.priceDelta > 0 ? ` (+${fmtMoney(upsell.priceDelta)} к текущему)` : ''}
+                </p>
+              ) : null}
+              {upsell.reason ? <p className="mt-1 text-slate-400">{upsell.reason}</p> : null}
+            </div>
+          ) : null}
+
+          <p className="text-xs text-slate-400">
+            {draft.text?.length || 0} / 1000 символов
+            {draft.source ? ` · ${draft.source}` : ''}
+            {draft.validation && !draft.validation.ok ? (
+              <span className="text-amber-600"> · {draft.validation.errors?.join(', ')}</span>
+            ) : null}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2 border-t border-slate-100 px-5 py-4">
+          <button type="button" className="btn-secondary text-sm" onClick={onClose}>
+            Назад к правке
+          </button>
+          <button
+            type="button"
+            className="btn-primary text-sm"
+            disabled={sending || !draft.text?.trim()}
+            onClick={onSend}
+          >
+            {sending ? 'Отправка…' : 'Отправить в WB'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FeedbacksPanel({
   token,
   rows = [],
@@ -43,6 +132,7 @@ export default function FeedbacksPanel({
   const [generatingId, setGeneratingId] = useState(null);
   const [sendingId, setSendingId] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const [previewId, setPreviewId] = useState(null);
 
   const catalogRows = useMemo(
     () =>
@@ -53,6 +143,9 @@ export default function FeedbacksPanel({
         title: row.title,
         subjectId: row.subjectId,
         subjectName: row.subjectName,
+        salePrice: row.salePrice,
+        ourPrice: row.ourPrice,
+        basePrice: row.basePrice,
         lengthCm: row.lengthCm,
         widthCm: row.widthCm,
         heightCm: row.heightCm,
@@ -100,11 +193,12 @@ export default function FeedbacksPanel({
     if (token) loadFeedbacks();
   }, [token, loadFeedbacks]);
 
-  const generateDraft = useCallback(
-    async (feedback) => {
+  const requestDraft = useCallback(
+    async (feedback, { regenerate = false } = {}) => {
       if (!feedback?.id) return;
       setGeneratingId(feedback.id);
       setError('');
+      const variationSeed = Date.now() + Math.floor(Math.random() * 10000);
       try {
         const response = await fetch('/api/unit-calc/feedback-draft', {
           method: 'POST',
@@ -112,7 +206,12 @@ export default function FeedbacksPanel({
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ feedback, catalogRows }),
+          body: JSON.stringify({
+            feedback,
+            catalogRows,
+            regenerate,
+            variationSeed,
+          }),
         });
         const { data: payload } = await readJsonResponse(response);
         if (!response.ok) throw new Error(payload.error || 'Не удалось сгенерировать ответ');
@@ -123,12 +222,15 @@ export default function FeedbacksPanel({
             text: payload.draft || '',
             source: payload.source,
             alternative: payload.alternative,
+            premiumUpsell: payload.premiumUpsell,
+            validation: payload.validation,
             hint: payload.hint,
           },
         }));
         setExpandedId(feedback.id);
         if (payload.hint) setStatus(payload.hint);
-        else if (payload.source === 'openai') setStatus('Черновик сгенерирован (AI)');
+        else if (regenerate) setStatus('Новый вариант ответа готов');
+        else if (payload.source?.startsWith('openai')) setStatus('Черновик сгенерирован (AI)');
         else setStatus('Черновик по шаблону (без OPENAI_API_KEY)');
       } catch (err) {
         setError(err.message || 'Ошибка генерации');
@@ -137,6 +239,12 @@ export default function FeedbacksPanel({
       }
     },
     [token, catalogRows]
+  );
+
+  const generateDraft = useCallback((feedback) => requestDraft(feedback, { regenerate: false }), [requestDraft]);
+  const regenerateDraft = useCallback(
+    (feedback) => requestDraft(feedback, { regenerate: true }),
+    [requestDraft]
   );
 
   const sendAnswer = useCallback(
@@ -150,7 +258,6 @@ export default function FeedbacksPanel({
         setError('Нужен API-ключ WB.');
         return;
       }
-      if (!window.confirm('Отправить ответ в WB? Текст уйдёт на модерацию.')) return;
 
       setSendingId(feedback.id);
       setError('');
@@ -171,6 +278,7 @@ export default function FeedbacksPanel({
         if (!response.ok) throw new Error(payload.error || 'Не удалось отправить ответ');
 
         setStatus(payload.verified ? 'Ответ отправлен и подтверждён в WB' : 'Ответ отправлен');
+        setPreviewId(null);
         setDrafts((prev) => {
           const next = { ...prev };
           delete next[feedback.id];
@@ -188,6 +296,8 @@ export default function FeedbacksPanel({
 
   const feedbacks = data?.feedbacks || [];
   const countUnanswered = data?.countUnanswered ?? 0;
+  const previewFeedback = previewId ? feedbacks.find((fb) => fb.id === previewId) : null;
+  const previewDraft = previewId ? drafts[previewId] : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -203,8 +313,8 @@ export default function FeedbacksPanel({
               ) : null}
             </h2>
             <TabDescription>
-              Неотвеченные отзывы из кабинета WB. Сгенерируй черновик, отредактируй и отправь вручную — без
-              автопилота.
+              AI черновики с апселлом на более дорогие аналоги. Предпросмотр и перегенерация — отправка только
+              вручную.
             </TabDescription>
           </div>
           <button
@@ -218,8 +328,8 @@ export default function FeedbacksPanel({
         </div>
 
         <p className="mt-2 text-xs text-slate-500">
-          Токен WB: категория «Вопросы и отзывы». Для AI-черновиков на сервере нужен{' '}
-          <code className="rounded bg-slate-100 px-1">OPENAI_API_KEY</code>.
+          Токен WB: «Вопросы и отзывы». AI: <code className="rounded bg-slate-100 px-1">OPENAI_API_KEY</code> —
+          каждая генерация с новой формулировкой.
         </p>
 
         {error ? (
@@ -246,6 +356,8 @@ export default function FeedbacksPanel({
         {feedbacks.map((fb) => {
           const draft = drafts[fb.id];
           const isOpen = expandedId === fb.id || Boolean(draft?.text);
+          const upsell = draft?.premiumUpsell || draft?.alternative;
+
           return (
             <article key={fb.id} className="panel">
               <div className="flex flex-wrap items-start justify-between gap-2">
@@ -305,18 +417,43 @@ export default function FeedbacksPanel({
                     </button>
                     <button
                       type="button"
+                      className="btn-secondary text-sm"
+                      disabled={generatingId === fb.id || !draft?.text}
+                      onClick={() => regenerateDraft(fb)}
+                      title="AI напишет другой вариант формулировки"
+                    >
+                      Перегенерировать
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-sm"
+                      disabled={!draft?.text?.trim()}
+                      onClick={() => setPreviewId(fb.id)}
+                    >
+                      Предпросмотр
+                    </button>
+                    <button
+                      type="button"
                       className="btn-primary text-sm"
                       disabled={sendingId === fb.id || !draft?.text?.trim()}
-                      onClick={() => sendAnswer(fb)}
+                      onClick={() => setPreviewId(fb.id)}
                     >
-                      {sendingId === fb.id ? 'Отправка…' : 'Отправить в WB'}
+                      Отправить в WB
                     </button>
                   </div>
 
-                  {draft?.alternative?.article ? (
-                    <p className="mt-2 text-xs text-slate-500">
-                      Альтернатива в черновике: арт. {draft.alternative.article} — {draft.alternative.title}
-                    </p>
+                  {upsell?.article ? (
+                    <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      <span className="font-medium text-slate-700">SKU в ответе: </span>
+                      арт. {upsell.article} — {upsell.title}
+                      {upsell.priceLabel || upsell.price ? (
+                        <span className="text-slate-500">
+                          {' '}
+                          · {upsell.priceLabel || fmtMoney(upsell.price)}
+                          {upsell.priceDelta > 0 ? ` (+${fmtMoney(upsell.priceDelta)})` : ''}
+                        </span>
+                      ) : null}
+                    </div>
                   ) : null}
 
                   <textarea
@@ -333,7 +470,7 @@ export default function FeedbacksPanel({
                   />
                   <p className="mt-1 text-xs text-slate-400">
                     {(draft?.text || '').length} / 1000 символов
-                    {draft?.source ? ` · источник: ${draft.source}` : ''}
+                    {draft?.source ? ` · ${draft.source}` : ''}
                   </p>
                 </div>
               ) : null}
@@ -341,6 +478,16 @@ export default function FeedbacksPanel({
           );
         })}
       </div>
+
+      {previewFeedback && previewDraft ? (
+        <PreviewModal
+          feedback={previewFeedback}
+          draft={previewDraft}
+          sending={sendingId === previewFeedback.id}
+          onClose={() => setPreviewId(null)}
+          onSend={() => sendAnswer(previewFeedback)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   catalogRowToProductContext,
   listAlternativeCandidates,
   pickAlternativeProduct,
+  pickPremiumUpsell,
   validateFeedbackAnswer,
 } from '../../lib/feedback-ai-prompt.js';
 import { serializeFeedback } from '../../lib/wb-feedbacks.js';
@@ -64,7 +65,10 @@ async function enrichProductFromContent(token, row, feedback) {
   }
 }
 
-async function generateWithOpenAI(prompt, apiKey) {
+async function generateWithOpenAI(prompt, apiKey, { regenerate = false, variationSeed = null } = {}) {
+  const seed = variationSeed ?? Date.now();
+  const temperature = regenerate ? 0.92 : 0.82;
+
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -73,13 +77,15 @@ async function generateWithOpenAI(prompt, apiKey) {
     },
     body: JSON.stringify({
       model: 'gpt-4o-mini',
-      temperature: 0.6,
-      max_tokens: 400,
+      temperature,
+      top_p: 0.95,
+      presence_penalty: regenerate ? 0.6 : 0.35,
+      frequency_penalty: regenerate ? 0.5 : 0.2,
+      max_tokens: 450,
       messages: [
         {
           role: 'system',
-          content:
-            'Ты пишешь короткие ответы продавца на отзывы WB. Только готовый текст ответа, без кавычек и пояснений.',
+          content: `Ты пишешь живые ответы продавца на отзывы WB на «ты». Каждый ответ уникален по формулировкам. Seed вариации: ${seed}. Только готовый текст, без кавычек.`,
         },
         { role: 'user', content: prompt },
       ],
@@ -120,13 +126,31 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Укажите объект feedback' });
   }
 
+  const regenerate = req.body?.regenerate === true;
+  const variationSeed =
+    req.body?.variationSeed != null
+      ? Number(req.body.variationSeed) || Date.now()
+      : regenerate
+        ? Date.now()
+        : null;
+
   const catalogRows = Array.isArray(req.body?.catalogRows) ? req.body.catalogRows : [];
   const row = findCatalogRow(catalogRows, feedback);
   const product = await enrichProductFromContent(token, row, feedback);
+  const rating = Number(feedback?.rating) || 0;
   const alternative = pickAlternativeProduct(catalogRows, feedback, feedback.nmId);
-  const candidates = listAlternativeCandidates(catalogRows, feedback, feedback.nmId, 5);
+  const premiumUpsell = rating >= 4 ? pickPremiumUpsell(catalogRows, feedback.nmId) : null;
+  const candidates = listAlternativeCandidates(catalogRows, feedback, feedback.nmId, 6);
 
-  const prompt = buildFeedbackPrompt({ feedback, product, alternative, candidates });
+  const prompt = buildFeedbackPrompt({
+    feedback,
+    product,
+    alternative,
+    premiumUpsell,
+    candidates,
+    variationSeed,
+    regenerate,
+  });
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
 
   let draft;
@@ -134,15 +158,27 @@ export default async function handler(req, res) {
 
   if (openaiKey) {
     try {
-      draft = await generateWithOpenAI(prompt, openaiKey);
-      source = 'openai';
+      draft = await generateWithOpenAI(prompt, openaiKey, { regenerate, variationSeed });
+      source = regenerate ? 'openai-regen' : 'openai';
     } catch (error) {
       console.error('[unit-calc/feedback-draft] OpenAI', error);
-      draft = buildTemplateDraft({ feedback, product, alternative });
+      draft = buildTemplateDraft({
+        feedback,
+        product,
+        alternative,
+        premiumUpsell,
+        variationSeed,
+      });
       source = 'template-fallback';
     }
   } else {
-    draft = buildTemplateDraft({ feedback, product, alternative });
+    draft = buildTemplateDraft({
+      feedback,
+      product,
+      alternative,
+      premiumUpsell,
+      variationSeed,
+    });
   }
 
   const validation = validateFeedbackAnswer(draft);
@@ -150,10 +186,13 @@ export default async function handler(req, res) {
   return res.status(200).json({
     draft: validation.text,
     source,
+    regenerate,
+    variationSeed,
     openaiConfigured: Boolean(openaiKey),
-    promptPreview: prompt.slice(0, 1200),
+    promptPreview: prompt.slice(0, 1400),
     product,
     alternative,
+    premiumUpsell,
     candidates,
     validation,
     hint: openaiKey
