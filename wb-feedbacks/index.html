@@ -29,6 +29,21 @@
         Для работы «Отзывы WB» нужен JavaScript в браузере.
       </p>
     </noscript>
+    <script>
+      window.addEventListener(
+        'error',
+        function (event) {
+          if (!event.target || event.target.tagName !== 'SCRIPT') return;
+          var root = document.getElementById('root');
+          if (!root) return;
+          root.innerHTML =
+            '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem;font-family:system-ui,sans-serif;background:#fef2f2;color:#991b1b;text-align:center">' +
+            '<div><p style="font-weight:600;margin:0 0 0.5rem">Не удалось загрузить приложение</p>' +
+            '<p style="margin:0;font-size:0.875rem;color:#7f1d1d">Обновите страницу или проверьте деплой на Vercel.</p></div></div>';
+        },
+        true
+      );
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

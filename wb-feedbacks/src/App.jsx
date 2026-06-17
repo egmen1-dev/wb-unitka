@@ -4,12 +4,35 @@ import TokenPanel from './components/TokenPanel';
 import { APP_BUILD } from './lib/app-build';
 import { loadToken, saveToken } from './lib/storage';
 
+function BootStatus({ error }) {
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        {error}
+      </div>
+    );
+  }
+
+  return null;
+}
+
 export default function App() {
   const [token, setToken] = useState(() => loadToken());
+  const [bootError, setBootError] = useState(null);
 
   useEffect(() => {
     saveToken(token);
   }, [token]);
+
+  useEffect(() => {
+    function onUnhandled(event) {
+      const message = event?.reason?.message || 'Необработанная ошибка';
+      setBootError(message);
+    }
+
+    window.addEventListener('unhandledrejection', onUnhandled);
+    return () => window.removeEventListener('unhandledrejection', onUnhandled);
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -26,6 +49,7 @@ export default function App() {
       </header>
 
       <main className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-5">
+        <BootStatus error={bootError} />
         <TokenPanel token={token} onTokenChange={setToken} />
         <FeedbacksPanel token={token} />
         <p className="text-center text-xs text-slate-400">
