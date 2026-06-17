@@ -81,8 +81,10 @@ export default function WbTokenScopesHint({
     }
   }, [autoCheckOnLoad, token, runCheck]);
 
+  const scopeResult = (label) => checkResult?.scopes?.find((s) => s.label === label) || null;
+
   const scopeStatus = (label) => {
-    const found = checkResult?.scopes?.find((s) => s.label === label);
+    const found = scopeResult(label);
     if (!found) return null;
     return found.ok ? 'ok' : 'fail';
   };
@@ -103,6 +105,7 @@ export default function WbTokenScopesHint({
     <ul className={`${compact ? 'mt-1' : 'mt-2'} space-y-2`}>
       {categories.map((cat) => {
         const status = scopeStatus(cat.label);
+        const probe = scopeResult(cat.label);
         const badge = cat.required
           ? 'обязательно'
           : cat.recommended
@@ -140,6 +143,16 @@ export default function WbTokenScopesHint({
               {cat.purpose}
               {status === 'fail' && cat.withoutScope ? (
                 <span className="mt-0.5 block text-slate-400">Без права: {cat.withoutScope}</span>
+              ) : null}
+              {status === 'fail' && probe?.error ? (
+                <details className="mt-0.5 text-slate-400">
+                  <summary className="cursor-pointer select-none">Детали проверки</summary>
+                  <span className="mt-0.5 block font-mono text-[10px] leading-snug text-slate-500">
+                    {probe.error}
+                    {probe.functional?.status ? ` · API ${probe.functional.status}` : ''}
+                    {probe.ping?.status ? ` · ping ${probe.ping.status}` : ''}
+                  </span>
+                </details>
               ) : null}
             </span>
           </li>
