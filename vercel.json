@@ -1,0 +1,47 @@
+{
+  "buildCommand": "node node_modules/vite/bin/vite.js build --config wb-feedbacks/vite.config.js",
+  "outputDirectory": "wb-feedbacks/dist",
+  "framework": null,
+  "functions": {
+    "api/feedbacks/feedbacks.js": {
+      "maxDuration": 60
+    },
+    "api/feedbacks/feedback-draft.js": {
+      "maxDuration": 60
+    },
+    "api/feedbacks/feedbacks-check.js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    }
+  ],
+  "installCommand": "npm install"
+}
