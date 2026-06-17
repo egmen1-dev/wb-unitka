@@ -1,5 +1,5 @@
 {
-  "buildCommand": "node node_modules/vite/bin/vite.js build --config wb-feedbacks/vite.config.js",
+  "buildCommand": "npm run build:feedbacks",
   "outputDirectory": "wb-feedbacks/dist",
   "framework": null,
   "functions": {
@@ -19,7 +19,7 @@
       "destination": "/api/$1"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!api/|assets/|favicon\\.svg|_vercel).*)",
       "destination": "/index.html"
     }
   ],

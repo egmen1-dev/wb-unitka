@@ -46,15 +46,19 @@ npm run dev:feedbacks
 
 ## Деплой
 
-Отдельный Vercel-проект **wb-feedbacks** (корень репозитория, не папка `wb-feedbacks/` — иначе не подхватятся `api/feedbacks/*`).
+Отдельный Vercel-проект **wb-feedbacks**.
 
 **Продакшен:** https://wb-feedbacks.vercel.app (после импорта и деплоя)
 
 ### Импорт в Vercel (≈3 шага)
 
 1. [vercel.com/new](https://vercel.com/new) → **Import** репозитория `egmen1-dev/wb-unitka`
-2. **Project Name:** `wb-feedbacks` · **Branch:** `wb-feedbacks` (или `feature/wb-unit-calc`) · **Root Directory:** оставьте `./` (корень репо, поле пустое)
+2. **Project Name:** `wb-feedbacks` · **Branch:** `wb-feedbacks` · **Root Directory:**
+   - **рекомендуется:** оставьте пустым (корень репо) — подхватится корневой `vercel.json`
+   - **или** укажите `wb-feedbacks` — подхватится `wb-feedbacks/vercel.json` (API всё равно из `api/feedbacks/*` в корне)
 3. **Deploy** → затем **Settings → Environment Variables** (см. таблицу YandexGPT выше) → **Redeploy**
+
+> Если страница пустая: в Vercel → **Deployments** → последний деплой → **Building** / **Logs**. Частая причина — неверный **Root Directory** или сборка не создала `wb-feedbacks/dist` (должны быть `index.html` и `assets/*.js`).
 
 Конфиг сборки: на ветке `wb-feedbacks` в корне лежит `vercel.json`; на других ветках — `vercel.feedbacks.json` (CLI: `npm run deploy:feedbacks`).
 

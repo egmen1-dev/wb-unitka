@@ -87,6 +87,7 @@ function feedbacksApiPlugin() {
 }
 
 export default defineConfig({
+  base: '/',
   root: __dirname,
   css: {
     postcss: path.resolve(__dirname, 'postcss.config.js'),
