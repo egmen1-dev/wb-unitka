@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { createProfileId } from '../lib/storage';
-import WbTokenScopesHint from './WbTokenScopesHint';
 
 function maskToken(token) {
   if (!token || token.length < 12) return '••••';
@@ -13,8 +12,6 @@ export default function ApiKeyPanel({
   onProfilesChange,
   onActiveChange,
   onProfileAdded,
-  wbFeedbacksToken = '',
-  onWbFeedbacksTokenChange,
   teamMode = false,
 }) {
   const [name, setName] = useState('');
@@ -62,6 +59,18 @@ export default function ApiKeyPanel({
               ? 'Общие для команды — видны всем по ссылке. После сохранения ключ автоматически запускает загрузку.'
               : 'Создайте команду выше, чтобы коллеги видели те же ключи.'}
           </p>
+          <p className="mt-1 text-xs text-slate-400">
+            Для ответов на отзывы —{' '}
+            <a
+              href="https://wb-feedbacks.vercel.app"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-brand-700 underline"
+            >
+              отдельный сервис
+            </a>{' '}
+            со своим токеном «Вопросы и отзывы».
+          </p>
         </div>
         <button type="button" className="btn-secondary" onClick={() => setShowForm((v) => !v)}>
           {showForm ? 'Скрыть' : '+ Добавить ключ'}
@@ -100,39 +109,6 @@ export default function ApiKeyPanel({
       ) : (
         <p className="mt-3 text-sm text-amber-700">Добавьте WB API токен, чтобы загрузить каталог.</p>
       )}
-
-      <div className="mt-3">
-        <WbTokenScopesHint token={active?.token} compact showCheckButton={Boolean(active?.token)} />
-      </div>
-
-      <div className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-3">
-        <label className="block text-xs font-semibold text-slate-700" htmlFor="wb-feedbacks-token">
-          Токен WB для отзывов (Вопросы и отзывы)
-        </label>
-        <p className="mt-1 text-xs text-slate-500">
-          Отдельный токен снижает конфликты лимитов API (429): вкладка «Отзывы» обновляется им, не
-          нагружая основной токен синка и FBS.
-        </p>
-        <input
-          id="wb-feedbacks-token"
-          className="input mt-2 font-mono text-xs"
-          placeholder="Опционально — если пусто, используется основной ключ"
-          value={wbFeedbacksToken}
-          onChange={(e) => onWbFeedbacksTokenChange?.(e.target.value)}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        {wbFeedbacksToken?.trim() ? (
-          <div className="mt-2">
-            <WbTokenScopesHint
-              token={wbFeedbacksToken.trim()}
-              compact
-              showCheckButton
-              title="Права токена для отзывов"
-            />
-          </div>
-        ) : null}
-      </div>
 
       {showForm ? (
         <form className="mt-4 grid gap-3 md:grid-cols-[1fr_2fr_auto]" onSubmit={addProfile}>

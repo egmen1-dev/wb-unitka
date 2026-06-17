@@ -10,15 +10,14 @@ const root = path.resolve(__dirname, '..');
 loadEnvLocal(root);
 
 const API_ROUTES = {
-  '/api/unit-calc/sync': () => import('../api/unit-calc/sync.js'),
-  '/api/unit-calc/workspace': () => import('../api/unit-calc/workspace.js'),
-  '/api/unit-calc/supplier-price': () => import('../api/unit-calc/supplier-price.js'),
-  '/api/unit-calc/fbs-assembly': () => import('../api/unit-calc/fbs-assembly.js'),
+  '/api/feedbacks/feedbacks': () => import('../api/feedbacks/feedbacks.js'),
+  '/api/feedbacks/feedback-draft': () => import('../api/feedbacks/feedback-draft.js'),
+  '/api/feedbacks/feedbacks-check': () => import('../api/feedbacks/feedbacks-check.js'),
 };
 
-function unitCalcApiPlugin() {
+function feedbacksApiPlugin() {
   return {
-    name: 'unit-calc-api',
+    name: 'feedbacks-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const pathname = req.url?.split('?')[0] || '';
@@ -41,7 +40,10 @@ function unitCalcApiPlugin() {
           for await (const chunk of req) chunks.push(chunk);
           const raw = Buffer.concat(chunks).toString('utf8');
           const body = raw ? JSON.parse(raw) : {};
-          const query = Object.fromEntries(new URL(pathname + (req.url?.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''), 'http://local').searchParams);
+          const query = Object.fromEntries(
+            new URL(pathname + (req.url?.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''), 'http://local')
+              .searchParams
+          );
 
           const handler = (await loadHandler()).default;
           const fakeReq = {
@@ -89,7 +91,7 @@ export default defineConfig({
   css: {
     postcss: path.resolve(__dirname, 'postcss.config.js'),
   },
-  plugins: [react(), unitCalcApiPlugin()],
+  plugins: [react(), feedbacksApiPlugin()],
   resolve: {
     alias: {
       '@lib': path.resolve(root, 'lib'),
@@ -97,7 +99,7 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
-    port: 5174,
+    port: 5175,
     fs: {
       allow: [root],
     },

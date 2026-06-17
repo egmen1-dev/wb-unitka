@@ -110,7 +110,7 @@ export default async function handler(req, res) {
       tokenScope: 'Вопросы и отзывы',
     });
   } catch (error) {
-    console.error('[unit-calc/feedbacks]', error);
+    console.error('[feedbacks]', error);
 
     if (error instanceof WbFeedbacksRateLimitError || error?.code === 'RATE_LIMIT') {
       return rateLimitResponse(res, error);

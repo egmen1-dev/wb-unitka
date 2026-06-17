@@ -1,12 +1,15 @@
 {
-  "buildCommand": "node node_modules/vite/bin/vite.js build --config wb-unit-calc/vite.config.js",
-  "outputDirectory": "wb-unit-calc/dist",
+  "buildCommand": "node node_modules/vite/bin/vite.js build --config wb-feedbacks/vite.config.js",
+  "outputDirectory": "wb-feedbacks/dist",
   "framework": null,
   "functions": {
-    "api/unit-calc/sync.js": {
-      "maxDuration": 300
+    "api/feedbacks/feedbacks.js": {
+      "maxDuration": 60
     },
-    "api/unit-calc/supplier-price.js": {
+    "api/feedbacks/feedback-draft.js": {
+      "maxDuration": 60
+    },
+    "api/feedbacks/feedbacks-check.js": {
       "maxDuration": 60
     }
   },

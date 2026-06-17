@@ -3,7 +3,6 @@ const SCOPE_TTL_MS = 90_000;
 
 let countCache = null;
 let scopeCheckCache = null;
-let badgeFetchedThisSession = false;
 let rateLimitUntil = 0;
 
 export function getCachedUnansweredCount() {
@@ -16,24 +15,12 @@ export function setCachedUnansweredCount(value) {
   countCache = { value: Number(value) || 0, at: Date.now() };
 }
 
-export function wasBadgeFetchedThisSession() {
-  return badgeFetchedThisSession;
-}
-
-export function markBadgeFetchedThisSession() {
-  badgeFetchedThisSession = true;
-}
-
 export function isFeedbacksRateLimited() {
   if (rateLimitUntil > 0 && Date.now() >= rateLimitUntil) {
     rateLimitUntil = 0;
     return false;
   }
   return rateLimitUntil > 0 && Date.now() < rateLimitUntil;
-}
-
-export function getFeedbacksRateLimitRetryAt() {
-  return rateLimitUntil;
 }
 
 export function getFeedbacksRateLimitSecondsLeft() {
