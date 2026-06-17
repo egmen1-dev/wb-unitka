@@ -123,6 +123,7 @@ import { normalizeTeamAccess } from '@lib/team-permissions.js';
 export function buildWorkspacePayload({
   profiles,
   activeProfileId,
+  wbFeedbacksToken,
   purchases,
   settings,
   settingsUpdatedAt,
@@ -140,6 +141,7 @@ export function buildWorkspacePayload({
     teamAccess: normalizeTeamAccess(teamAccess),
     profiles,
     activeProfileId,
+    wbFeedbacksToken: String(wbFeedbacksToken || '').trim() || null,
     purchases,
     settings,
     settingsUpdatedAt: settingsUpdatedAt || null,

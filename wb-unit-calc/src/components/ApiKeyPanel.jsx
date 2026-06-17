@@ -13,6 +13,8 @@ export default function ApiKeyPanel({
   onProfilesChange,
   onActiveChange,
   onProfileAdded,
+  wbFeedbacksToken = '',
+  onWbFeedbacksTokenChange,
   teamMode = false,
 }) {
   const [name, setName] = useState('');
@@ -101,6 +103,35 @@ export default function ApiKeyPanel({
 
       <div className="mt-3">
         <WbTokenScopesHint token={active?.token} compact showCheckButton={Boolean(active?.token)} />
+      </div>
+
+      <div className="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-3">
+        <label className="block text-xs font-semibold text-slate-700" htmlFor="wb-feedbacks-token">
+          Токен WB для отзывов (Вопросы и отзывы)
+        </label>
+        <p className="mt-1 text-xs text-slate-500">
+          Можно отдельный токен только с категорией отзывов — обновление вкладки «Отзывы» использует
+          его, не трогая основной токен синка.
+        </p>
+        <input
+          id="wb-feedbacks-token"
+          className="input mt-2 font-mono text-xs"
+          placeholder="Опционально — если пусто, используется основной ключ"
+          value={wbFeedbacksToken}
+          onChange={(e) => onWbFeedbacksTokenChange?.(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        {wbFeedbacksToken?.trim() ? (
+          <div className="mt-2">
+            <WbTokenScopesHint
+              token={wbFeedbacksToken.trim()}
+              compact
+              showCheckButton
+              title="Права токена для отзывов"
+            />
+          </div>
+        ) : null}
       </div>
 
       {showForm ? (

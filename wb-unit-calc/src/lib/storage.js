@@ -1,6 +1,7 @@
 const KEYS = {
   profiles: 'wb-unit-calc:profiles',
   activeProfileId: 'wb-unit-calc:active-profile',
+  wbFeedbacksToken: 'wb-unit-calc:wb-feedbacks-token',
   purchases: 'wb-unit-calc:purchases',
   settings: 'wb-unit-calc:settings',
   supplierCatalogs: 'wb-unit-calc:supplier-catalogs',
@@ -40,6 +41,23 @@ export function loadActiveProfileId() {
 export function saveActiveProfileId(id) {
   if (id) localStorage.setItem(KEYS.activeProfileId, id);
   else localStorage.removeItem(KEYS.activeProfileId);
+}
+
+export function loadWbFeedbacksToken() {
+  return localStorage.getItem(KEYS.wbFeedbacksToken) || '';
+}
+
+export function saveWbFeedbacksToken(token) {
+  const trimmed = String(token || '').trim();
+  if (trimmed) localStorage.setItem(KEYS.wbFeedbacksToken, trimmed);
+  else localStorage.removeItem(KEYS.wbFeedbacksToken);
+}
+
+/** Токен для вкладки «Отзывы»: отдельный или основной. */
+export function resolveWbFeedbacksToken(dedicated, main) {
+  const dedicatedToken = String(dedicated || '').trim();
+  if (dedicatedToken) return dedicatedToken;
+  return String(main || '').trim();
 }
 
 export function loadPurchases() {

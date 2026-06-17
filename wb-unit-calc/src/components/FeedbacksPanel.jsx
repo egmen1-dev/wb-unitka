@@ -13,6 +13,13 @@ import WbTokenScopesHint from './WbTokenScopesHint';
 
 const PAGE_SIZE = 100;
 
+function missingTokenMessage(dedicatedToken) {
+  if (String(dedicatedToken || '').trim()) {
+    return 'Токен для отзывов не принят WB. Проверьте категорию «Вопросы и отзывы» в разделе «Данные».';
+  }
+  return 'Добавьте API-ключ WB или отдельный токен для отзывов в разделе «Данные».';
+}
+
 function TabDescription({ children }) {
   return <p className="text-sm text-slate-600">{children}</p>;
 }
@@ -138,29 +145,28 @@ function formatRateLimitError(payload, status) {
   return null;
 }
 
-const FEEDBACKS_PAGE_SIZE = 100;
-
-function missingTokenMessage(dedicatedToken) {
-  if (String(dedicatedToken || '').trim()) {
-    return 'Токен для отзывов не принят WB. Проверьте категорию «Вопросы и отзывы» в разделе «Данные».';
-  }
-  return 'Добавьте API-ключ WB или отдельный токен для отзывов в разделе «Данные».';
-}
-
-function formatApiError(payload, status, fallback = 'Не удалось загрузить отзывы') {
+function formatApiError(payload, status, fallback = 'Не удалось загрузить отзывы', dedicatedToken = '') {
   const rateMsg = formatRateLimitError(payload, status);
   if (rateMsg) return rateMsg;
   const parts = [payload?.error, payload?.hint, payload?.detail].filter(Boolean);
-  if (parts.length) return parts.join('. ');
+  if (parts.length) {
+    const msg = parts.join('. ');
+    if (status === 403 && String(dedicatedToken || '').trim()) {
+      return `${msg}. Токен для отзывов не имеет категории «Вопросы и отзывы».`;
+    }
+    return msg;
+  }
   return fallback;
 }
 
 export default function FeedbacksPanel({
   token,
+  dedicatedToken = '',
   rows = [],
   onUnansweredCountChange,
 }) {
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [data, setData] = useState(null);
@@ -170,7 +176,6 @@ export default function FeedbacksPanel({
   const [expandedId, setExpandedId] = useState(null);
   const [previewId, setPreviewId] = useState(null);
   const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
-  const [loadingMore, setLoadingMore] = useState(false);
   const refreshLockRef = useRef(false);
   const refreshDebounceRef = useRef(null);
   const loadAttemptRef = useRef(0);
@@ -217,7 +222,7 @@ export default function FeedbacksPanel({
   const loadFeedbacks = useCallback(
     async ({ force = false, isRetry = false, append = false, skip = 0 } = {}) => {
       if (!token) {
-        setError('Добавьте API-ключ WB в разделе «Данные».');
+        setError(missingTokenMessage(dedicatedToken));
         return;
       }
 
@@ -282,7 +287,7 @@ export default function FeedbacksPanel({
               return loadFeedbacks({ force: true, isRetry: true, append, skip });
             }
           }
-          const err = new Error(formatApiError(payload, response.status));
+          const err = new Error(formatApiError(payload, response.status, undefined, dedicatedToken));
           throw err;
         }
         clearFeedbacksRateLimit();
@@ -318,7 +323,7 @@ export default function FeedbacksPanel({
         }
       }
     },
-    [token, onUnansweredCountChange, waitForRateLimit]
+    [token, dedicatedToken, onUnansweredCountChange, waitForRateLimit]
   );
 
   const loadMoreFeedbacks = useCallback(() => {
@@ -441,7 +446,7 @@ export default function FeedbacksPanel({
         return;
       }
       if (!token) {
-        setError('Нужен API-ключ WB.');
+        setError(missingTokenMessage(dedicatedToken));
         return;
       }
 
@@ -485,13 +490,14 @@ export default function FeedbacksPanel({
         setSendingId(null);
       }
     },
-    [token, drafts, loadFeedbacks]
+    [token, dedicatedToken, drafts, loadFeedbacks]
   );
 
   const feedbacks = data?.feedbacks || [];
   const countUnanswered = data?.countUnanswered ?? 0;
-  const hasMore =
-    data?.hasMore ?? (feedbacks.length > 0 && feedbacks.length < countUnanswered);
+  const hasMoreFeedbacks = countUnanswered > feedbacks.length;
+  const usingDedicatedToken = Boolean(String(dedicatedToken || '').trim());
+  const hasMore = hasMoreFeedbacks || (data?.hasMore ?? false);
   const previewFeedback = previewId ? feedbacks.find((fb) => fb.id === previewId) : null;
   const previewDraft = previewId ? drafts[previewId] : null;
 
@@ -511,6 +517,11 @@ export default function FeedbacksPanel({
             <TabDescription>
               AI черновики с апселлом на более дорогие аналоги. Предпросмотр и перегенерация — отправка только
               вручную.
+              {usingDedicatedToken ? (
+                <span className="mt-1 block text-xs text-emerald-700">
+                  Загрузка отзывов — отдельный токен «Вопросы и отзывы».
+                </span>
+              ) : null}
             </TabDescription>
           </div>
           <button
@@ -628,7 +639,7 @@ export default function FeedbacksPanel({
 
       {!token ? (
         <section className="panel text-sm text-slate-600">
-          Добавьте API-ключ в разделе «Данные», чтобы загружать отзывы.
+          {missingTokenMessage(dedicatedToken)}
         </section>
       ) : null}
 
