@@ -231,8 +231,11 @@ export default function FeedbacksPanel({
         setExpandedId(feedback.id);
         if (payload.hint) setStatus(payload.hint);
         else if (regenerate) setStatus('Новый вариант ответа готов');
-        else if (payload.source?.startsWith('openai')) setStatus('Черновик сгенерирован (AI)');
-        else setStatus('Черновик по шаблону (без OPENAI_API_KEY)');
+        else if (payload.provider === 'yandex' || payload.source?.startsWith('yandex'))
+          setStatus('Черновик сгенерирован (YandexGPT)');
+        else if (payload.provider === 'openai' || payload.source?.startsWith('openai'))
+          setStatus('Черновик сгенерирован (OpenAI)');
+        else setStatus('Черновик по шаблону (AI не настроен на сервере)');
       } catch (err) {
         setError(err.message || 'Ошибка генерации');
       } finally {
@@ -336,9 +339,64 @@ export default function FeedbacksPanel({
           showCheckButton
           className="mt-3"
         />
-        <p className="mt-2 text-xs text-slate-400">
-          AI-черновики: на сервере нужен <code className="rounded bg-slate-100 px-1">OPENAI_API_KEY</code>.
-        </p>
+        <details className="mt-2 text-xs text-slate-500">
+          <summary className="cursor-pointer text-slate-600 hover:text-slate-800">
+            AI-черновики: YandexGPT (из РФ) или OpenAI
+          </summary>
+          <div className="mt-2 space-y-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-600">
+            <p>
+              <span className="font-medium text-slate-700">Рекомендуется из России — YandexGPT:</span>{' '}
+              openai.com не нужен, API работает через{' '}
+              <a
+                href="https://console.yandex.cloud/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand-700 underline"
+              >
+                console.yandex.cloud
+              </a>
+              .
+            </p>
+            <ol className="list-decimal space-y-1 pl-4">
+              <li>
+                Зарегистрируйтесь в{' '}
+                <a
+                  href="https://console.yandex.cloud/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-700 underline"
+                >
+                  Yandex Cloud
+                </a>{' '}
+                и создайте каталог (folder).
+              </li>
+              <li>
+                Включите сервис{' '}
+                <a
+                  href="https://console.yandex.cloud/folders?section=ai"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-700 underline"
+                >
+                  Foundation Models
+                </a>{' '}
+                и создайте API-ключ (тип «Api-Key»).
+              </li>
+              <li>
+                Скопируйте ID каталога (например <code className="rounded bg-white px-1">b1g…</code>) и ключ.
+              </li>
+              <li>
+                В Vercel → Settings → Environment Variables добавьте{' '}
+                <code className="rounded bg-white px-1">YANDEX_GPT_API_KEY</code> и{' '}
+                <code className="rounded bg-white px-1">YANDEX_FOLDER_ID</code>, затем redeploy.
+              </li>
+            </ol>
+            <p className="text-slate-500">
+              Опционально: <code className="rounded bg-white px-1">OPENAI_API_KEY</code> — если есть доступ к
+              OpenAI (используется как запасной вариант, если YandexGPT недоступен).
+            </p>
+          </div>
+        </details>
 
         {error ? (
           <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">

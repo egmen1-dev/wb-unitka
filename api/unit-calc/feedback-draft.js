@@ -8,6 +8,7 @@ import {
   pickPremiumUpsell,
   validateFeedbackAnswer,
 } from '../../lib/feedback-ai-prompt.js';
+import { completeYandexGpt, readYandexConfig } from '../../lib/yandex-gpt.js';
 import { serializeFeedback } from '../../lib/wb-feedbacks.js';
 
 function readToken(req) {
@@ -67,6 +68,14 @@ async function enrichProductFromContent(token, row, feedback) {
   }
 }
 
+function feedbackSystemPrompt({ regenerate = false, variationSeed = null } = {}) {
+  const seed = variationSeed ?? Date.now();
+  const temperatureNote = regenerate
+    ? 'Это перегенерация — используй другие обороты и структуру.'
+    : 'Каждый ответ уникален по формулировкам.';
+  return `Ты пишешь живые ответы продавца на отзывы WB на «ты». ${temperatureNote} Seed вариации: ${seed}. Только готовый текст, без кавычек.`;
+}
+
 async function generateWithOpenAI(prompt, apiKey, { regenerate = false, variationSeed = null } = {}) {
   const seed = variationSeed ?? Date.now();
   const temperature = regenerate ? 0.92 : 0.82;
@@ -85,10 +94,7 @@ async function generateWithOpenAI(prompt, apiKey, { regenerate = false, variatio
       frequency_penalty: regenerate ? 0.5 : 0.2,
       max_tokens: 450,
       messages: [
-        {
-          role: 'system',
-          content: `Ты пишешь живые ответы продавца на отзывы WB на «ты». Каждый ответ уникален по формулировкам. Seed вариации: ${seed}. Только готовый текст, без кавычек.`,
-        },
+        { role: 'system', content: feedbackSystemPrompt({ regenerate, variationSeed: seed }) },
         { role: 'user', content: prompt },
       ],
     }),
@@ -109,6 +115,33 @@ async function generateWithOpenAI(prompt, apiKey, { regenerate = false, variatio
   const draft = String(payload?.choices?.[0]?.message?.content || '').trim();
   if (!draft) throw new Error('OpenAI вернул пустой ответ');
   return draft;
+}
+
+async function generateWithYandex(prompt, { regenerate = false, variationSeed = null } = {}) {
+  const seed = variationSeed ?? Date.now();
+  const temperature = regenerate ? 0.9 : 0.75;
+  const { text } = await completeYandexGpt({
+    system: feedbackSystemPrompt({ regenerate, variationSeed: seed }),
+    user: prompt,
+    temperature,
+    maxTokens: 450,
+  });
+  return text;
+}
+
+function buildTemplateFallback({ feedback, product, alternative, premiumUpsell, variationSeed }) {
+  return buildTemplateDraft({
+    feedback,
+    product,
+    alternative,
+    premiumUpsell,
+    variationSeed,
+  });
+}
+
+function aiHint({ yandexConfigured, openaiConfigured }) {
+  if (yandexConfigured || openaiConfigured) return undefined;
+  return 'Задайте YANDEX_GPT_API_KEY + YANDEX_FOLDER_ID (рекомендуется из РФ) или OPENAI_API_KEY для AI-черновиков. Сейчас используется шаблон.';
 }
 
 export default async function handler(req, res) {
@@ -153,34 +186,53 @@ export default async function handler(req, res) {
     variationSeed,
     regenerate,
   });
+
+  const yandexConfigured = Boolean(readYandexConfig());
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
 
   let draft;
   let source = 'template';
+  let provider = 'template';
 
-  if (openaiKey) {
+  const templateArgs = { feedback, product, alternative, premiumUpsell, variationSeed };
+
+  if (yandexConfigured) {
+    try {
+      draft = await generateWithYandex(prompt, { regenerate, variationSeed });
+      source = regenerate ? 'yandex-regen' : 'yandex';
+      provider = 'yandex';
+    } catch (error) {
+      console.error('[unit-calc/feedback-draft] YandexGPT', error);
+      if (openaiKey) {
+        try {
+          draft = await generateWithOpenAI(prompt, openaiKey, { regenerate, variationSeed });
+          source = regenerate ? 'openai-regen' : 'openai';
+          provider = 'openai';
+        } catch (openaiError) {
+          console.error('[unit-calc/feedback-draft] OpenAI fallback', openaiError);
+          draft = buildTemplateFallback(templateArgs);
+          source = 'template-fallback';
+          provider = 'template';
+        }
+      } else {
+        draft = buildTemplateFallback(templateArgs);
+        source = 'template-fallback';
+        provider = 'template';
+      }
+    }
+  } else if (openaiKey) {
     try {
       draft = await generateWithOpenAI(prompt, openaiKey, { regenerate, variationSeed });
       source = regenerate ? 'openai-regen' : 'openai';
+      provider = 'openai';
     } catch (error) {
       console.error('[unit-calc/feedback-draft] OpenAI', error);
-      draft = buildTemplateDraft({
-        feedback,
-        product,
-        alternative,
-        premiumUpsell,
-        variationSeed,
-      });
+      draft = buildTemplateFallback(templateArgs);
       source = 'template-fallback';
+      provider = 'template';
     }
   } else {
-    draft = buildTemplateDraft({
-      feedback,
-      product,
-      alternative,
-      premiumUpsell,
-      variationSeed,
-    });
+    draft = buildTemplateFallback(templateArgs);
   }
 
   const validation = validateFeedbackAnswer(draft);
@@ -188,8 +240,10 @@ export default async function handler(req, res) {
   return res.status(200).json({
     draft: validation.text,
     source,
+    provider,
     regenerate,
     variationSeed,
+    yandexConfigured,
     openaiConfigured: Boolean(openaiKey),
     promptPreview: prompt.slice(0, 1400),
     product,
@@ -197,8 +251,6 @@ export default async function handler(req, res) {
     premiumUpsell,
     candidates,
     validation,
-    hint: openaiKey
-      ? undefined
-      : 'Задайте OPENAI_API_KEY на сервере для AI-черновиков. Сейчас используется шаблон.',
+    hint: aiHint({ yandexConfigured, openaiConfigured: Boolean(openaiKey) }),
   });
 }

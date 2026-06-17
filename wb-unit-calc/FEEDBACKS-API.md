@@ -46,9 +46,39 @@
 | `regenerate` | `true` — другая формулировка |
 | `variationSeed` | Число для вариативности |
 
-Ответ: `{ draft, source, product, alternative, premiumUpsell, validation }`.
+Ответ: `{ draft, source, provider, product, alternative, premiumUpsell, validation }`.
 
-Источники черновика: `openai`, `openai-regen`, `template`, `template-fallback` (если нет `OPENAI_API_KEY` на сервере).
+| Поле | Значения |
+|------|----------|
+| `provider` | `yandex`, `openai`, `template` |
+| `source` | `yandex`, `yandex-regen`, `openai`, `openai-regen`, `template`, `template-fallback` |
+
+Приоритет провайдера на сервере:
+
+1. **YandexGPT** — если заданы `YANDEX_GPT_API_KEY` + `YANDEX_FOLDER_ID` (рекомендуется из РФ, openai.com не нужен)
+2. **OpenAI** — если Yandex не настроен, но есть `OPENAI_API_KEY`
+3. **Шаблон** — если AI-ключей нет или оба провайдера вернули ошибку
+
+### Настройка YandexGPT (из России)
+
+1. [console.yandex.cloud](https://console.yandex.cloud/) → создайте облако и **каталог** (folder).
+2. Сервис **Foundation Models** → создайте **API-ключ** (заголовок `Authorization: Api-Key …`).
+3. Скопируйте **ID каталога** (строка вида `b1g…`) — это `YANDEX_FOLDER_ID`.
+4. В Vercel (или `.env` локально) задайте переменные:
+
+| Переменная | Описание |
+|------------|----------|
+| `YANDEX_GPT_API_KEY` | API-ключ Yandex Cloud |
+| `YANDEX_FOLDER_ID` | ID каталога |
+| `YANDEX_GPT_MODEL` | опционально: `yandexgpt-lite` (по умолчанию), `yandexgpt`, `yandexgpt-32k` |
+
+Альтернативное имя ключа: `YANDEX_CLOUD_API_KEY` (если `YANDEX_GPT_API_KEY` не задан).
+
+Сервисному аккаунту нужна роль `ai.languageModels.user` на каталог. После добавления переменных — redeploy на Vercel.
+
+### OpenAI (опционально)
+
+Если есть доступ к openai.com, можно задать `OPENAI_API_KEY` — используется, когда YandexGPT не настроен, или как fallback при ошибке YandexGPT.
 
 ### `POST /api/unit-calc/feedbacks-check`
 
@@ -71,7 +101,7 @@
 }
 ```
 
-Проверка: `GET /ping` + функциональный запрос на каждый API (count-unanswered, cards/list, prices filter, statistics report).
+Проверка: функциональный запрос на каждый API (count-unanswered, cards/list, prices filter, statistics report) + `GET /ping` как fallback. Если `/ping` недоступен (429), но рабочий эндпоинт отвечает — категория считается доступной.
 
 ## Категории токена WB
 
