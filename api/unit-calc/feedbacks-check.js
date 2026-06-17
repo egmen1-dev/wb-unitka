@@ -1,4 +1,5 @@
 import { probeWbFeedbacksTokenScopes, WB_FEEDBACKS_TOKEN_SCOPES } from '../../lib/wb-token-scopes.js';
+import { WbFeedbacksRateLimitError } from '../../lib/wb-feedbacks.js';
 
 function readToken(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
@@ -33,6 +34,17 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('[unit-calc/feedbacks-check]', error);
+
+    if (error instanceof WbFeedbacksRateLimitError || error?.code === 'RATE_LIMIT') {
+      const retryAfterSec = error.retryAfterSec || 5;
+      res.setHeader('Retry-After', String(retryAfterSec));
+      return res.status(429).json({
+        error: error.message || `Слишком много запросов к WB, подождите ${retryAfterSec} сек`,
+        code: 'RATE_LIMIT',
+        retryAfterSec,
+      });
+    }
+
     return res.status(500).json({
       error: error.message || 'Не удалось проверить категории токена',
     });

@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/format';
 import { readJsonResponse } from '../lib/http';
 import {
+  clearFeedbacksRateLimit,
   getCachedUnansweredCount,
+  getFeedbacksRateLimitSecondsLeft,
+  isFeedbacksRateLimited,
   setCachedUnansweredCount,
-  shouldDeferListAfterScopeCheck,
+  setFeedbacksRateLimited,
 } from '../lib/feedbacks-cache';
 import WbTokenScopesHint from './WbTokenScopesHint';
 
@@ -147,8 +150,11 @@ export default function FeedbacksPanel({
   const [sendingId, setSendingId] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [previewId, setPreviewId] = useState(null);
+  const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
   const refreshLockRef = useRef(false);
   const refreshDebounceRef = useRef(null);
+  const loadAttemptRef = useRef(0);
+  const hasDataRef = useRef(false);
 
   const catalogRows = useMemo(
     () =>
@@ -171,13 +177,16 @@ export default function FeedbacksPanel({
   );
 
   const loadFeedbacks = useCallback(
-    async ({ force = false } = {}) => {
+    async ({ force = false, isRetry = false } = {}) => {
       if (!token) {
         setError('Добавьте API-ключ WB в разделе «Данные».');
         return;
       }
 
-      if (!force && shouldDeferListAfterScopeCheck()) {
+      if (!force && !isRetry && isFeedbacksRateLimited()) {
+        const sec = getFeedbacksRateLimitSecondsLeft();
+        setRateLimitCountdown(sec);
+        setError(`Слишком много запросов к WB, подождите ${sec} сек`);
         return;
       }
 
@@ -188,7 +197,7 @@ export default function FeedbacksPanel({
       }
 
       setLoading(true);
-      setError('');
+      if (!isRetry) setError('');
       if (!cachedCount || force) setStatus('');
       try {
         const response = await fetch('/api/unit-calc/feedbacks', {
@@ -202,12 +211,28 @@ export default function FeedbacksPanel({
         const { data: payload } = await readJsonResponse(response);
         if (!response.ok) {
           const rateMsg = formatRateLimitError(payload, response.status);
+          if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
+            const sec = Number(payload?.retryAfterSec) || 5;
+            setFeedbacksRateLimited(sec);
+            setRateLimitCountdown(sec);
+            if (!isRetry && loadAttemptRef.current < 1) {
+              loadAttemptRef.current += 1;
+              setError(`Слишком много запросов к WB, повтор через ${sec} сек…`);
+              setLoading(false);
+              await new Promise((resolve) => setTimeout(resolve, sec * 1000));
+              return loadFeedbacks({ force: true, isRetry: true });
+            }
+          }
           const err = new Error(rateMsg || payload.error || 'Не удалось загрузить отзывы');
           err.hint = payload.hint;
           throw err;
         }
+        clearFeedbacksRateLimit();
+        loadAttemptRef.current = 0;
+        setRateLimitCountdown(0);
+        hasDataRef.current = true;
         setData(payload);
-        const count = payload.countUnanswered ?? 0;
+        const count = payload.countUnanswered ?? payload.feedbacks?.length ?? 0;
         setCachedUnansweredCount(count);
         onUnansweredCountChange?.(count);
         setStatus(`Без ответа: ${count}`);
@@ -216,8 +241,7 @@ export default function FeedbacksPanel({
         setError(
           rateMsg || (err.hint ? `${err.message}. ${err.hint}` : err.message || 'Ошибка загрузки')
         );
-        if (!cachedCount) {
-          setData(null);
+        if (!hasDataRef.current && !cachedCount) {
           onUnansweredCountChange?.(0);
         }
       } finally {
@@ -247,11 +271,20 @@ export default function FeedbacksPanel({
       onUnansweredCountChange?.(cachedCount);
     }
 
-    const deferMs = shouldDeferListAfterScopeCheck() ? 2500 : 800;
-    setLoading(true);
-    const timer = setTimeout(() => loadFeedbacks(), deferMs);
-    return () => clearTimeout(timer);
+    loadAttemptRef.current = 0;
+    loadFeedbacks();
+    return undefined;
   }, [token, loadFeedbacks, onUnansweredCountChange]);
+
+  useEffect(() => {
+    if (rateLimitCountdown <= 0) return undefined;
+    const timer = setInterval(() => {
+      const left = getFeedbacksRateLimitSecondsLeft();
+      setRateLimitCountdown(left);
+      if (left <= 0) clearFeedbacksRateLimit();
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [rateLimitCountdown]);
 
   useEffect(
     () => () => {
@@ -348,6 +381,8 @@ export default function FeedbacksPanel({
         if (!response.ok) {
           if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
             const sec = Number(payload?.retryAfterSec) || 5;
+            setFeedbacksRateLimited(sec);
+            setRateLimitCountdown(sec);
             throw new Error(`Слишком много запросов к WB, подождите ${sec} сек`);
           }
           throw new Error(payload.error || 'Не удалось отправить ответ');
@@ -471,9 +506,37 @@ export default function FeedbacksPanel({
         </details>
 
         {error ? (
-          <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
-            {error}
-          </p>
+          <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+            <p>{error}</p>
+            {rateLimitCountdown > 0 ? (
+              <button
+                type="button"
+                className="btn-secondary mt-2 text-xs"
+                disabled={rateLimitCountdown > 0 || loading}
+                onClick={() => {
+                  loadAttemptRef.current = 0;
+                  clearFeedbacksRateLimit();
+                  loadFeedbacks({ force: true });
+                }}
+              >
+                {rateLimitCountdown > 0
+                  ? `Повторить через ${rateLimitCountdown} сек`
+                  : 'Повторить загрузку'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-secondary mt-2 text-xs"
+                disabled={loading}
+                onClick={() => {
+                  loadAttemptRef.current = 0;
+                  loadFeedbacks({ force: true });
+                }}
+              >
+                Повторить загрузку
+              </button>
+            )}
+          </div>
         ) : null}
         {status ? <p className="mt-2 text-xs text-slate-600">{status}</p> : null}
       </section>
@@ -484,9 +547,9 @@ export default function FeedbacksPanel({
         </section>
       ) : null}
 
-      {token && !loading && feedbacks.length === 0 ? (
+      {token && !loading && feedbacks.length === 0 && !error ? (
         <section className="panel text-sm text-slate-600">
-          {data ? 'Нет неотвеченных отзывов — отлично!' : 'Нажмите «Обновить», чтобы загрузить отзывы.'}
+          {data ? 'Нет неотвеченных отзывов — отлично!' : 'Загрузка отзывов…'}
         </section>
       ) : null}
 
