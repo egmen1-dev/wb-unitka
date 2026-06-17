@@ -99,7 +99,7 @@ export default function ApiKeyPanel({
         <p className="mt-3 text-sm text-amber-700">Добавьте WB API токен, чтобы загрузить каталог.</p>
       )}
 
-      <div className="mt-4">
+      <div className="mt-3">
         <WbTokenScopesHint token={active?.token} compact showCheckButton={Boolean(active?.token)} />
       </div>
 

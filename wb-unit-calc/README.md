@@ -19,6 +19,7 @@ npm run dev:unit
 - Ручной ввод / импорт закупочных цен
 - Настройки формул (налог, комиссия, логистика)
 - **ДРР по артикулу** — средняя доля рекламы за 30 дней из API Продвижения (`/adv/v3/fullstats`)
+- **Отзывы WB** — список, AI-черновики с апселлом, ответ через API (см. [FEEDBACKS-API.md](./FEEDBACKS-API.md))
 - Пересчёт в реальном времени при изменении закупки или настроек
 
 Токен WB должен включать категорию **«Продвижение»** для подгрузки рекламы.
@@ -59,3 +60,4 @@ vercel link --project moi-magazin   # вернуть линк магазина
 - `src/` — React SPA
 - `../lib/unit-economics/` — формулы расчёта
 - `../api/unit-calc/sync.js` — прокси к WB API (токен из заголовка)
+- `../api/unit-calc/feedbacks.js`, `feedback-draft.js`, `feedbacks-check.js` — отзывы (см. [FEEDBACKS-API.md](./FEEDBACKS-API.md))

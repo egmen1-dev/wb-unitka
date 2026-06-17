@@ -16,7 +16,7 @@
       "maxDuration": 60
     },
     "api/unit-calc/feedbacks-check.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   },
   "rewrites": [

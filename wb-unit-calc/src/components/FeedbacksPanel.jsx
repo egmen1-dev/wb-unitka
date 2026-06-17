@@ -328,7 +328,14 @@ export default function FeedbacksPanel({
           </button>
         </div>
 
-        <WbTokenScopesHint token={token} className="mt-3" />
+        <WbTokenScopesHint
+          token={token}
+          collapsible
+          defaultOpen={false}
+          autoCheckOnLoad
+          showCheckButton
+          className="mt-3"
+        />
         <p className="mt-2 text-xs text-slate-400">
           AI-черновики: на сервере нужен <code className="rounded bg-slate-100 px-1">OPENAI_API_KEY</code>.
         </p>

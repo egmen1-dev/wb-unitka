@@ -60,20 +60,6 @@ export default async function handler(req, res) {
       });
     }
 
-    if (action === 'get') {
-      const feedbackId = req.body?.feedbackId || req.body?.id;
-      if (!feedbackId) {
-        return res.status(400).json({ error: 'Укажите feedbackId' });
-      }
-
-      const feedback = await fetchFeedbackById(token, feedbackId);
-      return res.status(200).json({
-        action: 'get',
-        feedback,
-        tokenScope: 'Вопросы и отзывы',
-      });
-    }
-
     if (action === 'answer') {
       const feedbackId = req.body?.feedbackId || req.body?.id;
       const text = req.body?.text;
