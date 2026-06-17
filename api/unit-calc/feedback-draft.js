@@ -1,4 +1,4 @@
-import { fetchContentCardsByNmIds } from '../../lib/wb-official-api.js';
+import { fetchContentCardsByNmIds, withWbApiToken } from '../../lib/wb-official-api.js';
 import {
   buildFeedbackPrompt,
   buildTemplateDraft,
@@ -51,7 +51,9 @@ async function enrichProductFromContent(token, row, feedback) {
   }
 
   try {
-    const cards = await fetchContentCardsByNmIds([nmId], { concurrency: 1 });
+    const cards = await withWbApiToken(token, () =>
+      fetchContentCardsByNmIds([nmId], { concurrency: 1 })
+    );
     const card = cards[0];
     if (!card) {
       return catalogRowToProductContext(row, { description: row?.title || feedback?.productName || '' });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fmtMoney } from '../lib/format';
 import { readJsonResponse } from '../lib/http';
+import WbTokenScopesHint from './WbTokenScopesHint';
 
 function TabDescription({ children }) {
   return <p className="text-sm text-slate-600">{children}</p>;
@@ -327,9 +328,9 @@ export default function FeedbacksPanel({
           </button>
         </div>
 
-        <p className="mt-2 text-xs text-slate-500">
-          Токен WB: «Вопросы и отзывы». AI: <code className="rounded bg-slate-100 px-1">OPENAI_API_KEY</code> —
-          каждая генерация с новой формулировкой.
+        <WbTokenScopesHint token={token} className="mt-3" />
+        <p className="mt-2 text-xs text-slate-400">
+          AI-черновики: на сервере нужен <code className="rounded bg-slate-100 px-1">OPENAI_API_KEY</code>.
         </p>
 
         {error ? (

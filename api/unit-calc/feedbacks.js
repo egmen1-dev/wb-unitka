@@ -1,8 +1,8 @@
 import {
   countUnansweredFeedbacks,
+  fetchFeedbackById,
   fetchUnansweredFeedbacks,
   postFeedbackAnswer,
-  serializeFeedback,
 } from '../../lib/wb-feedbacks.js';
 
 function readToken(req) {
@@ -12,6 +12,9 @@ function readToken(req) {
   if (req.body?.token) return String(req.body.token).trim();
   return process.env.WB_API_TOKEN?.trim() || null;
 }
+
+const FEEDBACKS_HINT =
+  'Нужен токен с категорией «Вопросы и отзывы» (feedbacks-api.wildberries.ru).';
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -37,6 +40,36 @@ export default async function handler(req, res) {
       return res.status(200).json({
         action: 'count',
         ...counts,
+        tokenScope: 'Вопросы и отзывы',
+      });
+    }
+
+    if (action === 'get') {
+      const feedbackId = req.body?.feedbackId || req.body?.id;
+      if (!feedbackId) {
+        return res.status(400).json({ error: 'Укажите feedbackId' });
+      }
+      const feedback = await fetchFeedbackById(token, feedbackId);
+      if (!feedback?.id) {
+        return res.status(404).json({ error: 'Отзыв не найден' });
+      }
+      return res.status(200).json({
+        action: 'get',
+        feedback,
+        tokenScope: 'Вопросы и отзывы',
+      });
+    }
+
+    if (action === 'get') {
+      const feedbackId = req.body?.feedbackId || req.body?.id;
+      if (!feedbackId) {
+        return res.status(400).json({ error: 'Укажите feedbackId' });
+      }
+
+      const feedback = await fetchFeedbackById(token, feedbackId);
+      return res.status(200).json({
+        action: 'get',
+        feedback,
         tokenScope: 'Вопросы и отзывы',
       });
     }
@@ -84,10 +117,7 @@ export default async function handler(req, res) {
     const status = /401|403/.test(message) ? 403 : 500;
     return res.status(status).json({
       error: message,
-      hint:
-        status === 403
-          ? 'Нужен токен с правом «Вопросы и отзывы» (feedbacks-api).'
-          : undefined,
+      hint: status === 403 ? FEEDBACKS_HINT : undefined,
     });
   }
 }

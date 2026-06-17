@@ -15,6 +15,9 @@
     },
     "../api/unit-calc/feedback-draft.js": {
       "maxDuration": 60
+    },
+    "../api/unit-calc/feedbacks-check.js": {
+      "maxDuration": 30
     }
   },
   "rewrites": [
