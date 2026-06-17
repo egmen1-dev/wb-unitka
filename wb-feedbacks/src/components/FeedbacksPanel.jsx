@@ -125,6 +125,31 @@ function formatRateLimitError(payload, status) {
   return null;
 }
 
+function formatAiConfigLabel({ yandexConfigured, openaiConfigured, loading }) {
+  if (loading) return 'Проверка настроек AI на сервере…';
+  if (yandexConfigured && openaiConfigured) {
+    return 'AI: YandexGPT и OpenAI подключены на сервере';
+  }
+  if (yandexConfigured) return 'AI: YandexGPT подключён на сервере';
+  if (openaiConfigured) return 'AI: OpenAI подключён на сервере';
+  return 'AI не настроен на сервере — используется шаблон';
+}
+
+function formatDraftStatus(payload, { regenerate = false } = {}) {
+  if (payload.hint) return payload.hint;
+  if (regenerate) return 'Новый вариант ответа готов';
+  if (payload.provider === 'yandex' || payload.source?.startsWith('yandex')) {
+    return 'Черновик сгенерирован (YandexGPT)';
+  }
+  if (payload.provider === 'openai' || payload.source?.startsWith('openai')) {
+    return 'Черновик сгенерирован (OpenAI)';
+  }
+  if (payload.yandexConfigured || payload.openaiConfigured) {
+    return 'Черновик по шаблону (AI недоступен, проверьте ключи в Vercel)';
+  }
+  return 'Черновик по шаблону (AI не настроен на сервере)';
+}
+
 function formatApiError(payload, status, fallback = 'Не удалось загрузить отзывы') {
   const rateMsg = formatRateLimitError(payload, status);
   if (rateMsg) return rateMsg;
@@ -145,6 +170,11 @@ export default function FeedbacksPanel({ token }) {
   const [expandedId, setExpandedId] = useState(null);
   const [previewId, setPreviewId] = useState(null);
   const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
+  const [aiConfig, setAiConfig] = useState({
+    yandexConfigured: false,
+    openaiConfigured: false,
+    loading: true,
+  });
   const refreshLockRef = useRef(false);
   const refreshDebounceRef = useRef(null);
   const loadAttemptRef = useRef(0);
@@ -318,6 +348,35 @@ export default function FeedbacksPanel({ token }) {
   }, [loadFeedbacks, loading]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetchWithTimeout('/api/feedbacks/ai-config-check', { method: 'GET' });
+        const { data: payload } = await readJsonResponse(response);
+        if (cancelled) return;
+        if (!response.ok) {
+          setAiConfig({ yandexConfigured: false, openaiConfigured: false, loading: false });
+          return;
+        }
+        setAiConfig({
+          yandexConfigured: Boolean(payload?.yandexConfigured),
+          openaiConfigured: Boolean(payload?.openaiConfigured),
+          loading: false,
+        });
+      } catch {
+        if (!cancelled) {
+          setAiConfig({ yandexConfigured: false, openaiConfigured: false, loading: false });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!token) return undefined;
     const cachedCount = getCachedUnansweredCount();
     if (cachedCount != null) setStatus(`Без ответа: ${cachedCount}`);
@@ -391,13 +450,7 @@ export default function FeedbacksPanel({ token }) {
           },
         }));
         setExpandedId(feedback.id);
-        if (payload.hint) setStatus(payload.hint);
-        else if (regenerate) setStatus('Новый вариант ответа готов');
-        else if (payload.provider === 'yandex' || payload.source?.startsWith('yandex'))
-          setStatus('Черновик сгенерирован (YandexGPT)');
-        else if (payload.provider === 'openai' || payload.source?.startsWith('openai'))
-          setStatus('Черновик сгенерирован (OpenAI)');
-        else setStatus('Черновик по шаблону (AI не настроен на сервере)');
+        setStatus(formatDraftStatus(payload, { regenerate }));
       } catch (err) {
         setError(err.message || 'Ошибка генерации');
       } finally {
@@ -511,13 +564,37 @@ export default function FeedbacksPanel({ token }) {
 
         <details className="mt-3 text-xs text-slate-500">
           <summary className="cursor-pointer text-slate-600 hover:text-slate-800">
-            AI-черновики: YandexGPT (из РФ) или OpenAI
+            {formatAiConfigLabel(aiConfig)}
           </summary>
           <div className="mt-2 space-y-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-600">
             <p>
-              На сервере Vercel задайте <code className="rounded bg-white px-1">YANDEX_GPT_API_KEY</code> и{' '}
-              <code className="rounded bg-white px-1">YANDEX_FOLDER_ID</code> — см. README в репозитории.
+              <span className="font-medium text-slate-700">YandexGPT: </span>
+              {aiConfig.loading
+                ? 'проверка…'
+                : aiConfig.yandexConfigured
+                  ? 'подключён'
+                  : 'не подключён'}
             </p>
+            {!aiConfig.loading && !aiConfig.yandexConfigured ? (
+              <p>
+                В Vercel задайте <code className="rounded bg-white px-1">YANDEX_GPT_API_KEY</code> или{' '}
+                <code className="rounded bg-white px-1">YANDEX_CLOUD_API_KEY</code> и{' '}
+                <code className="rounded bg-white px-1">YANDEX_FOLDER_ID</code>.
+              </p>
+            ) : null}
+            <p>
+              <span className="font-medium text-slate-700">OpenAI: </span>
+              {aiConfig.loading
+                ? 'проверка…'
+                : aiConfig.openaiConfigured
+                  ? 'подключён'
+                  : 'не подключён'}
+            </p>
+            {!aiConfig.loading && !aiConfig.openaiConfigured ? (
+              <p>
+                Опционально: <code className="rounded bg-white px-1">OPENAI_API_KEY</code> в Vercel.
+              </p>
+            ) : null}
           </div>
         </details>
 

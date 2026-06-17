@@ -141,7 +141,7 @@ function buildTemplateFallback({ feedback, product, alternative, premiumUpsell, 
 
 function aiHint({ yandexConfigured, openaiConfigured }) {
   if (yandexConfigured || openaiConfigured) return undefined;
-  return 'Задайте YANDEX_GPT_API_KEY + YANDEX_FOLDER_ID (рекомендуется из РФ) или OPENAI_API_KEY для AI-черновиков. Сейчас используется шаблон.';
+  return 'Задайте YANDEX_GPT_API_KEY (или YANDEX_CLOUD_API_KEY) + YANDEX_FOLDER_ID в Vercel, либо OPENAI_API_KEY. Сейчас используется шаблон.';
 }
 
 export default async function handler(req, res) {

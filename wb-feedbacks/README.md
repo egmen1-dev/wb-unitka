@@ -37,6 +37,7 @@ npm run dev:feedbacks
 | Переменная | Описание |
 |------------|----------|
 | `YANDEX_GPT_API_KEY` | API-ключ Yandex Cloud |
+| `YANDEX_CLOUD_API_KEY` | альтернативное имя для `YANDEX_GPT_API_KEY` |
 | `YANDEX_FOLDER_ID` | ID каталога (`b1g…`) |
 | `YANDEX_GPT_MODEL` | опционально: `yandexgpt-lite` (по умолчанию) |
 

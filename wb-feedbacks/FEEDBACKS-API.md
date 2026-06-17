@@ -19,6 +19,10 @@
 
 Приоритет: YandexGPT → OpenAI → шаблон.
 
+### `GET|POST /api/feedbacks/ai-config-check`
+
+Проверка AI-ключей на сервере: `{ yandexConfigured, openaiConfigured }` (без значений ключей).
+
 ### `POST /api/feedbacks/feedbacks-check`
 
 Проверка категорий токена WB.
