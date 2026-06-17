@@ -10,7 +10,7 @@
 
 | `action` | Тело запроса | Ответ | WB API |
 |----------|--------------|-------|--------|
-| `list` (по умолчанию) | `{ "take": 50, "skip": 0, "order": "dateDesc" }` | `{ feedbacks[], countUnanswered, countUnansweredToday, countArchive }` | `GET /api/v1/feedbacks?isAnswered=false` |
+| `list` (по умолчанию) | `{ "take": 100, "skip": 0, "order": "dateDesc" }` | `{ feedbacks[], countUnanswered, countUnansweredToday, countArchive, hasMore }` | `GET /api/v1/feedbacks?isAnswered=false` |
 | `count` | `{ "action": "count" }` | `{ countUnanswered, countUnansweredToday }` | `GET /api/v1/feedbacks/count-unanswered` |
 | `get` | `{ "action": "get", "feedbackId": "…" }` | `{ feedback }` | `GET /api/v1/feedback?id=…` |
 | `answer` | `{ "action": "answer", "feedbackId": "…", "text": "…" }` | `{ verified, isAnswered, answerText, feedback }` | `POST /api/v1/feedbacks/answer` + проверка через `GET /api/v1/feedback` |
