@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { readJsonResponse } from '../lib/http';
 import {
   getCachedScopeCheck,
-  markScopeCheckStarted,
+  isFeedbacksRateLimited,
+  getFeedbacksRateLimitSecondsLeft,
   setCachedScopeCheck,
+  setFeedbacksRateLimited,
 } from '../lib/feedbacks-cache';
 
 /** Категории токена WB для вкладки «Отзывы» (дублирует lib/wb-token-scopes.js для UI). */
@@ -59,6 +61,12 @@ export default function WbTokenScopesHint({
       return;
     }
 
+    if (!force && isFeedbacksRateLimited()) {
+      const sec = getFeedbacksRateLimitSecondsLeft();
+      setCheckError(`Лимит WB API — подождите ${sec} сек перед проверкой прав`);
+      return;
+    }
+
     if (!force) {
       const cached = getCachedScopeCheck();
       if (cached) {
@@ -70,7 +78,6 @@ export default function WbTokenScopesHint({
     setChecking(true);
     setCheckError('');
     setCheckResult(null);
-    markScopeCheckStarted();
     try {
       const response = await fetch('/api/unit-calc/feedbacks-check', {
         method: 'POST',
@@ -84,6 +91,7 @@ export default function WbTokenScopesHint({
       if (!response.ok) {
         if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
           const sec = Number(payload?.retryAfterSec) || 5;
+          setFeedbacksRateLimited(sec);
           throw new Error(`Слишком много запросов к WB, подождите ${sec} сек`);
         }
         throw new Error(payload.error || 'Проверка не удалась');

@@ -406,34 +406,7 @@ export default function App() {
     const cached = getCachedUnansweredCount();
     if (cached != null) {
       setFeedbacksUnansweredCount(cached);
-      return;
     }
-
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch('/api/unit-calc/feedbacks', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ action: 'count' }),
-        });
-        const { data } = await readJsonResponse(response);
-        if (!cancelled && response.ok) {
-          const count = Number(data.countUnanswered) || 0;
-          setCachedUnansweredCount(count);
-          setFeedbacksUnansweredCount(count);
-        }
-      } catch {
-        if (!cancelled) setFeedbacksUnansweredCount(0);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [activeProfile?.token, team, myPermissions]);
 
   const changeSection = useCallback(
