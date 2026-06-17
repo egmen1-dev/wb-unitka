@@ -13,6 +13,7 @@ const API_ROUTES = {
   '/api/feedbacks/feedbacks': () => import('../api/feedbacks/feedbacks.js'),
   '/api/feedbacks/feedback-draft': () => import('../api/feedbacks/feedback-draft.js'),
   '/api/feedbacks/feedbacks-check': () => import('../api/feedbacks/feedbacks-check.js'),
+  '/api/feedbacks/ai-config-check': () => import('../api/feedbacks/ai-config-check.js'),
 };
 
 function feedbacksApiPlugin() {
