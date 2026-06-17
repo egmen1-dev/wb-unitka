@@ -76,6 +76,7 @@ import { buildEffectiveWbCache } from '@lib/wb-sync-cache.js';
 import { createRecalcRows } from './lib/recalc-rows-cache';
 import { setProductOverride } from './lib/product-overrides';
 import { readJsonResponse } from './lib/http';
+import { getCachedUnansweredCount, setCachedUnansweredCount } from './lib/feedbacks-cache';
 import { isAdvertRateLimitMessage } from '@lib/wb-advert-stats.js';
 
 function readBootCache() {
@@ -402,6 +403,12 @@ export default function App() {
       return;
     }
 
+    const cached = getCachedUnansweredCount();
+    if (cached != null) {
+      setFeedbacksUnansweredCount(cached);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {
@@ -415,7 +422,9 @@ export default function App() {
         });
         const { data } = await readJsonResponse(response);
         if (!cancelled && response.ok) {
-          setFeedbacksUnansweredCount(Number(data.countUnanswered) || 0);
+          const count = Number(data.countUnanswered) || 0;
+          setCachedUnansweredCount(count);
+          setFeedbacksUnansweredCount(count);
         }
       } catch {
         if (!cancelled) setFeedbacksUnansweredCount(0);

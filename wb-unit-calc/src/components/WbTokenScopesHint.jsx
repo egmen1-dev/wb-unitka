@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { readJsonResponse } from '../lib/http';
+import {
+  getCachedScopeCheck,
+  markScopeCheckStarted,
+  setCachedScopeCheck,
+} from '../lib/feedbacks-cache';
 
 /** Категории токена WB для вкладки «Отзывы» (дублирует lib/wb-token-scopes.js для UI). */
 export const FEEDBACKS_TOKEN_CATEGORIES = [
@@ -48,14 +53,24 @@ export default function WbTokenScopesHint({
   const [checkResult, setCheckResult] = useState(null);
   const [checkError, setCheckError] = useState('');
 
-  const runCheck = useCallback(async () => {
+  const runCheck = useCallback(async ({ force = false } = {}) => {
     if (!token) {
       setCheckError('Сначала добавьте API-ключ WB.');
       return;
     }
+
+    if (!force) {
+      const cached = getCachedScopeCheck();
+      if (cached) {
+        setCheckResult(cached);
+        return;
+      }
+    }
+
     setChecking(true);
     setCheckError('');
     setCheckResult(null);
+    markScopeCheckStarted();
     try {
       const response = await fetch('/api/unit-calc/feedbacks-check', {
         method: 'POST',
@@ -66,8 +81,15 @@ export default function WbTokenScopesHint({
         body: JSON.stringify({}),
       });
       const { data: payload } = await readJsonResponse(response);
-      if (!response.ok) throw new Error(payload.error || 'Проверка не удалась');
+      if (!response.ok) {
+        if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
+          const sec = Number(payload?.retryAfterSec) || 5;
+          throw new Error(`Слишком много запросов к WB, подождите ${sec} сек`);
+        }
+        throw new Error(payload.error || 'Проверка не удалась');
+      }
       setCheckResult(payload);
+      setCachedScopeCheck(payload);
     } catch (err) {
       setCheckError(err.message || 'Ошибка проверки');
     } finally {
@@ -76,9 +98,16 @@ export default function WbTokenScopesHint({
   }, [token]);
 
   useEffect(() => {
-    if (autoCheckOnLoad && token) {
-      runCheck();
+    if (!autoCheckOnLoad || !token) return undefined;
+
+    const cached = getCachedScopeCheck();
+    if (cached) {
+      setCheckResult(cached);
+      return undefined;
     }
+
+    const timer = setTimeout(() => runCheck(), 3000);
+    return () => clearTimeout(timer);
   }, [autoCheckOnLoad, token, runCheck]);
 
   const scopeResult = (label) => checkResult?.scopes?.find((s) => s.label === label) || null;
@@ -177,7 +206,7 @@ export default function WbTokenScopesHint({
             type="button"
             className="btn-secondary text-xs"
             disabled={checking || !token}
-            onClick={runCheck}
+            onClick={() => runCheck({ force: true })}
           >
             {checking ? 'Проверка…' : 'Проверить права токена'}
           </button>

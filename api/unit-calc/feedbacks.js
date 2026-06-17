@@ -3,6 +3,7 @@ import {
   fetchFeedbackById,
   fetchUnansweredFeedbacks,
   postFeedbackAnswer,
+  WbFeedbacksRateLimitError,
 } from '../../lib/wb-feedbacks.js';
 
 function readToken(req) {
@@ -15,6 +16,17 @@ function readToken(req) {
 
 const FEEDBACKS_HINT =
   'Нужен токен с категорией «Вопросы и отзывы» (feedbacks-api.wildberries.ru).';
+
+function rateLimitResponse(res, error) {
+  const retryAfterSec = error.retryAfterSec || 5;
+  res.setHeader('Retry-After', String(retryAfterSec));
+  return res.status(429).json({
+    error: error.message || `Слишком много запросов к WB, подождите ${retryAfterSec} сек`,
+    code: 'RATE_LIMIT',
+    retryAfterSec,
+    hint: 'Лимит feedbacks-api: ~3 запроса в секунду на продавца. Подождите и повторите.',
+  });
+}
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -82,16 +94,13 @@ export default async function handler(req, res) {
     const skip = Number(req.body?.skip) || 0;
     const order = req.body?.order === 'dateAsc' ? 'dateAsc' : 'dateDesc';
 
-    const [list, counts] = await Promise.all([
-      fetchUnansweredFeedbacks(token, { take, skip, order }),
-      countUnansweredFeedbacks(token).catch(() => ({ countUnanswered: 0, countUnansweredToday: 0 })),
-    ]);
+    const list = await fetchUnansweredFeedbacks(token, { take, skip, order });
 
     return res.status(200).json({
       action: 'list',
       feedbacks: list.feedbacks,
-      countUnanswered: counts.countUnanswered ?? list.countUnanswered,
-      countUnansweredToday: counts.countUnansweredToday ?? 0,
+      countUnanswered: list.countUnanswered,
+      countUnansweredToday: 0,
       countArchive: list.countArchive,
       skip: list.skip,
       take: list.take,
@@ -99,7 +108,20 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('[unit-calc/feedbacks]', error);
+
+    if (error instanceof WbFeedbacksRateLimitError || error?.code === 'RATE_LIMIT') {
+      return rateLimitResponse(res, error);
+    }
+
     const message = error.message || 'Ошибка WB feedbacks API';
+    const isRateLimit = /429|461|too many requests|RATE_LIMIT/i.test(message);
+    if (isRateLimit) {
+      return rateLimitResponse(res, {
+        message: 'Слишком много запросов к WB, подождите несколько секунд',
+        retryAfterSec: 5,
+      });
+    }
+
     const status = /401|403/.test(message) ? 403 : 500;
     return res.status(status).json({
       error: message,

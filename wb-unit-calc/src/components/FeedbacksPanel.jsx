@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/format';
 import { readJsonResponse } from '../lib/http';
+import {
+  getCachedUnansweredCount,
+  setCachedUnansweredCount,
+  shouldDeferListAfterScopeCheck,
+} from '../lib/feedbacks-cache';
 import WbTokenScopesHint from './WbTokenScopesHint';
 
 function TabDescription({ children }) {
@@ -120,6 +125,14 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
   );
 }
 
+function formatRateLimitError(payload, status) {
+  if (status === 429 || payload?.code === 'RATE_LIMIT') {
+    const sec = Number(payload?.retryAfterSec) || 5;
+    return `Слишком много запросов к WB, подождите ${sec} сек`;
+  }
+  return null;
+}
+
 export default function FeedbacksPanel({
   token,
   rows = [],
@@ -134,6 +147,8 @@ export default function FeedbacksPanel({
   const [sendingId, setSendingId] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [previewId, setPreviewId] = useState(null);
+  const refreshLockRef = useRef(false);
+  const refreshDebounceRef = useRef(null);
 
   const catalogRows = useMemo(
     () =>
@@ -155,44 +170,95 @@ export default function FeedbacksPanel({
     [rows]
   );
 
-  const loadFeedbacks = useCallback(async () => {
-    if (!token) {
-      setError('Добавьте API-ключ WB в разделе «Данные».');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    setStatus('');
-    try {
-      const response = await fetch('/api/unit-calc/feedbacks', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ action: 'list', take: 50 }),
-      });
-      const { data: payload } = await readJsonResponse(response);
-      if (!response.ok) {
-        const err = new Error(payload.error || 'Не удалось загрузить отзывы');
-        err.hint = payload.hint;
-        throw err;
+  const loadFeedbacks = useCallback(
+    async ({ force = false } = {}) => {
+      if (!token) {
+        setError('Добавьте API-ключ WB в разделе «Данные».');
+        return;
       }
-      setData(payload);
-      onUnansweredCountChange?.(payload.countUnanswered ?? 0);
-      setStatus(`Без ответа: ${payload.countUnanswered ?? 0}`);
-    } catch (err) {
-      setError(err.hint ? `${err.message}. ${err.hint}` : err.message || 'Ошибка загрузки');
-      setData(null);
-      onUnansweredCountChange?.(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [token, onUnansweredCountChange]);
+
+      if (!force && shouldDeferListAfterScopeCheck()) {
+        return;
+      }
+
+      const cachedCount = getCachedUnansweredCount();
+      if (!force && cachedCount != null) {
+        setStatus(`Без ответа: ${cachedCount}`);
+        onUnansweredCountChange?.(cachedCount);
+      }
+
+      setLoading(true);
+      setError('');
+      if (!cachedCount || force) setStatus('');
+      try {
+        const response = await fetch('/api/unit-calc/feedbacks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action: 'list', take: 50 }),
+        });
+        const { data: payload } = await readJsonResponse(response);
+        if (!response.ok) {
+          const rateMsg = formatRateLimitError(payload, response.status);
+          const err = new Error(rateMsg || payload.error || 'Не удалось загрузить отзывы');
+          err.hint = payload.hint;
+          throw err;
+        }
+        setData(payload);
+        const count = payload.countUnanswered ?? 0;
+        setCachedUnansweredCount(count);
+        onUnansweredCountChange?.(count);
+        setStatus(`Без ответа: ${count}`);
+      } catch (err) {
+        const rateMsg = formatRateLimitError(err, err.status);
+        setError(
+          rateMsg || (err.hint ? `${err.message}. ${err.hint}` : err.message || 'Ошибка загрузки')
+        );
+        if (!cachedCount) {
+          setData(null);
+          onUnansweredCountChange?.(0);
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [token, onUnansweredCountChange]
+  );
+
+  const debouncedRefresh = useCallback(() => {
+    if (refreshLockRef.current || loading) return;
+    if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+    refreshDebounceRef.current = setTimeout(() => {
+      refreshLockRef.current = true;
+      loadFeedbacks({ force: true }).finally(() => {
+        refreshLockRef.current = false;
+      });
+    }, 400);
+  }, [loadFeedbacks, loading]);
 
   useEffect(() => {
-    if (token) loadFeedbacks();
-  }, [token, loadFeedbacks]);
+    if (!token) return undefined;
+
+    const cachedCount = getCachedUnansweredCount();
+    if (cachedCount != null) {
+      setStatus(`Без ответа: ${cachedCount}`);
+      onUnansweredCountChange?.(cachedCount);
+    }
+
+    const deferMs = shouldDeferListAfterScopeCheck() ? 2500 : 800;
+    setLoading(true);
+    const timer = setTimeout(() => loadFeedbacks(), deferMs);
+    return () => clearTimeout(timer);
+  }, [token, loadFeedbacks, onUnansweredCountChange]);
+
+  useEffect(
+    () => () => {
+      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+    },
+    []
+  );
 
   const requestDraft = useCallback(
     async (feedback, { regenerate = false } = {}) => {
@@ -279,7 +345,13 @@ export default function FeedbacksPanel({
           }),
         });
         const { data: payload } = await readJsonResponse(response);
-        if (!response.ok) throw new Error(payload.error || 'Не удалось отправить ответ');
+        if (!response.ok) {
+          if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
+            const sec = Number(payload?.retryAfterSec) || 5;
+            throw new Error(`Слишком много запросов к WB, подождите ${sec} сек`);
+          }
+          throw new Error(payload.error || 'Не удалось отправить ответ');
+        }
 
         setStatus(payload.verified ? 'Ответ отправлен и подтверждён в WB' : 'Ответ отправлен');
         setPreviewId(null);
@@ -288,7 +360,7 @@ export default function FeedbacksPanel({
           delete next[feedback.id];
           return next;
         });
-        await loadFeedbacks();
+        await loadFeedbacks({ force: true });
       } catch (err) {
         setError(err.message || 'Ошибка отправки');
       } finally {
@@ -325,7 +397,7 @@ export default function FeedbacksPanel({
             type="button"
             className="btn-secondary text-sm"
             disabled={loading || !token}
-            onClick={loadFeedbacks}
+            onClick={debouncedRefresh}
           >
             {loading ? 'Загрузка…' : 'Обновить'}
           </button>
@@ -335,7 +407,7 @@ export default function FeedbacksPanel({
           token={token}
           collapsible
           defaultOpen={false}
-          autoCheckOnLoad
+          autoCheckOnLoad={false}
           showCheckButton
           className="mt-3"
         />
