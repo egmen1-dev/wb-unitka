@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { createProfileId } from '../lib/storage';
+import WbTokenScopesHint from './WbTokenScopesHint';
 
 function maskToken(token) {
   if (!token || token.length < 12) return '••••';
@@ -97,6 +98,10 @@ export default function ApiKeyPanel({
       ) : (
         <p className="mt-3 text-sm text-amber-700">Добавьте WB API токен, чтобы загрузить каталог.</p>
       )}
+
+      <div className="mt-4">
+        <WbTokenScopesHint token={active?.token} compact showCheckButton={Boolean(active?.token)} />
+      </div>
 
       {showForm ? (
         <form className="mt-4 grid gap-3 md:grid-cols-[1fr_2fr_auto]" onSubmit={addProfile}>
