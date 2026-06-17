@@ -52,8 +52,8 @@ npm run dev:feedbacks
 
 ### Импорт в Vercel (≈3 шага)
 
-1. [vercel.com/new](https://vercel.com/new) → **Import** репозитория `egmen1-dev/wb-unitka`
-2. **Project Name:** `wb-feedbacks` · **Branch:** `wb-feedbacks` · **Root Directory:**
+1. [vercel.com/new](https://vercel.com/new) → **Import** репозитория `egmen1-dev/wb-feedbacks`
+2. **Project Name:** `wb-feedbacks` · **Branch:** `main` · **Root Directory:**
    - **рекомендуется:** оставьте пустым (корень репо) — подхватится корневой `vercel.json`
    - **или** укажите `wb-feedbacks` — подхватится `wb-feedbacks/vercel.json` (API всё равно из `api/feedbacks/*` в корне)
 3. **Deploy** → затем **Settings → Environment Variables** (см. таблицу YandexGPT выше) → **Redeploy**
