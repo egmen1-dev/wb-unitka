@@ -1,5 +1,6 @@
 import {
   countUnansweredFeedbacks,
+  FEEDBACKS_PAGE_SIZE,
   fetchFeedbackById,
   fetchUnansweredFeedbacks,
   postFeedbackAnswer,
@@ -24,6 +25,7 @@ function rateLimitResponse(res, error) {
     error: error.message || `Слишком много запросов к WB, подождите ${retryAfterSec} сек`,
     code: 'RATE_LIMIT',
     retryAfterSec,
+    detail: error.detail || undefined,
     hint: 'Лимит feedbacks-api: ~3 запроса в секунду на продавца. Подождите и повторите.',
   });
 }
@@ -90,7 +92,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const take = Number(req.body?.take) || 50;
+    const take = Number(req.body?.take) || FEEDBACKS_PAGE_SIZE;
     const skip = Number(req.body?.skip) || 0;
     const order = req.body?.order === 'dateAsc' ? 'dateAsc' : 'dateDesc';
 
@@ -104,6 +106,7 @@ export default async function handler(req, res) {
       countArchive: list.countArchive,
       skip: list.skip,
       take: list.take,
+      hasMore: list.hasMore,
       tokenScope: 'Вопросы и отзывы',
     });
   } catch (error) {

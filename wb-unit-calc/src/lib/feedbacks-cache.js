@@ -25,7 +25,11 @@ export function markBadgeFetchedThisSession() {
 }
 
 export function isFeedbacksRateLimited() {
-  return Date.now() < rateLimitUntil;
+  if (rateLimitUntil > 0 && Date.now() >= rateLimitUntil) {
+    rateLimitUntil = 0;
+    return false;
+  }
+  return rateLimitUntil > 0 && Date.now() < rateLimitUntil;
 }
 
 export function getFeedbacksRateLimitRetryAt() {
@@ -38,7 +42,7 @@ export function getFeedbacksRateLimitSecondsLeft() {
 }
 
 export function setFeedbacksRateLimited(retryAfterSec = 5) {
-  const sec = Math.max(1, Number(retryAfterSec) || 5);
+  const sec = Math.min(60, Math.max(1, Number(retryAfterSec) || 5));
   rateLimitUntil = Date.now() + sec * 1000;
 }
 
