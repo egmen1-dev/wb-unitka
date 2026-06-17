@@ -20,9 +20,6 @@
       "destination": "/api/$1"
     },
     {
-      "handle": "filesystem"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
