@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/format';
 import { readJsonResponse } from '../lib/http';
 import {
@@ -9,20 +9,8 @@ import {
   setCachedUnansweredCount,
   setFeedbacksRateLimited,
 } from '../lib/feedbacks-cache';
-import WbTokenScopesHint from './WbTokenScopesHint';
 
 const PAGE_SIZE = 100;
-
-function missingTokenMessage(dedicatedToken) {
-  if (String(dedicatedToken || '').trim()) {
-    return 'Токен для отзывов не принят WB. Проверьте категорию «Вопросы и отзывы» в разделе «Данные».';
-  }
-  return 'Добавьте API-ключ WB или отдельный токен для отзывов в разделе «Данные».';
-}
-
-function TabDescription({ children }) {
-  return <p className="text-sm text-slate-600">{children}</p>;
-}
 
 function Stars({ rating }) {
   const n = Math.max(0, Math.min(5, Number(rating) || 0));
@@ -59,7 +47,6 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-4 sm:items-center"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="preview-title"
       onClick={onClose}
     >
       <div
@@ -67,12 +54,8 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="border-b border-slate-100 px-5 py-4">
-          <h3 id="preview-title" className="text-sm font-semibold text-slate-800">
-            Предпросмотр ответа
-          </h3>
-          <p className="mt-1 text-xs text-slate-500">
-            Так ответ увидит покупатель на WB после модерации
-          </p>
+          <h3 className="text-sm font-semibold text-slate-800">Предпросмотр ответа</h3>
+          <p className="mt-1 text-xs text-slate-500">Так ответ увидит покупатель на WB после модерации</p>
         </div>
 
         <div className="space-y-4 px-5 py-4">
@@ -86,7 +69,7 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
               {feedback.article ? ` · арт. ${feedback.article}` : ''}
             </p>
             {feedback.text ? (
-              <p className="mt-2 text-xs text-slate-600 italic">«{feedback.text}»</p>
+              <p className="mt-2 text-xs italic text-slate-600">«{feedback.text}»</p>
             ) : null}
           </div>
 
@@ -106,16 +89,12 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
                   {upsell.priceDelta > 0 ? ` (+${fmtMoney(upsell.priceDelta)} к текущему)` : ''}
                 </p>
               ) : null}
-              {upsell.reason ? <p className="mt-1 text-slate-400">{upsell.reason}</p> : null}
             </div>
           ) : null}
 
           <p className="text-xs text-slate-400">
             {draft.text?.length || 0} / 1000 символов
             {draft.source ? ` · ${draft.source}` : ''}
-            {draft.validation && !draft.validation.ok ? (
-              <span className="text-amber-600"> · {draft.validation.errors?.join(', ')}</span>
-            ) : null}
           </p>
         </div>
 
@@ -145,26 +124,15 @@ function formatRateLimitError(payload, status) {
   return null;
 }
 
-function formatApiError(payload, status, fallback = 'Не удалось загрузить отзывы', dedicatedToken = '') {
+function formatApiError(payload, status, fallback = 'Не удалось загрузить отзывы') {
   const rateMsg = formatRateLimitError(payload, status);
   if (rateMsg) return rateMsg;
   const parts = [payload?.error, payload?.hint, payload?.detail].filter(Boolean);
-  if (parts.length) {
-    const msg = parts.join('. ');
-    if (status === 403 && String(dedicatedToken || '').trim()) {
-      return `${msg}. Токен для отзывов не имеет категории «Вопросы и отзывы».`;
-    }
-    return msg;
-  }
+  if (parts.length) return parts.join('. ');
   return fallback;
 }
 
-export default function FeedbacksPanel({
-  token,
-  dedicatedToken = '',
-  rows = [],
-  onUnansweredCountChange,
-}) {
+export default function FeedbacksPanel({ token }) {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
@@ -182,26 +150,6 @@ export default function FeedbacksPanel({
   const hasDataRef = useRef(false);
   const loadInFlightRef = useRef(false);
   const autoRetryTimerRef = useRef(null);
-
-  const catalogRows = useMemo(
-    () =>
-      rows.map((row) => ({
-        vendorCode: row.vendorCode,
-        nmId: row.nmId,
-        brand: row.brand,
-        title: row.title,
-        subjectId: row.subjectId,
-        subjectName: row.subjectName,
-        salePrice: row.salePrice,
-        ourPrice: row.ourPrice,
-        basePrice: row.basePrice,
-        lengthCm: row.lengthCm,
-        widthCm: row.widthCm,
-        heightCm: row.heightCm,
-        weightKg: row.weightKg,
-      })),
-    [rows]
-  );
 
   const waitForRateLimit = useCallback(async () => {
     if (!isFeedbacksRateLimited()) return;
@@ -222,7 +170,7 @@ export default function FeedbacksPanel({
   const loadFeedbacks = useCallback(
     async ({ force = false, isRetry = false, append = false, skip = 0 } = {}) => {
       if (!token) {
-        setError(missingTokenMessage(dedicatedToken));
+        setError('Вставьте токен WB с категорией «Вопросы и отзывы».');
         return;
       }
 
@@ -248,7 +196,6 @@ export default function FeedbacksPanel({
       const cachedCount = getCachedUnansweredCount();
       if (!force && !append && cachedCount != null) {
         setStatus(`Без ответа: ${cachedCount}`);
-        onUnansweredCountChange?.(cachedCount);
       }
 
       if (append) setLoadingMore(true);
@@ -259,7 +206,7 @@ export default function FeedbacksPanel({
       if (!isRetry && !append) setError('');
       if ((!cachedCount || force) && !append) setStatus('');
       try {
-        const response = await fetch('/api/unit-calc/feedbacks', {
+        const response = await fetch('/api/feedbacks/feedbacks', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -287,8 +234,7 @@ export default function FeedbacksPanel({
               return loadFeedbacks({ force: true, isRetry: true, append, skip });
             }
           }
-          const err = new Error(formatApiError(payload, response.status, undefined, dedicatedToken));
-          throw err;
+          throw new Error(formatApiError(payload, response.status));
         }
         clearFeedbacksRateLimit();
         loadAttemptRef.current = 0;
@@ -301,20 +247,13 @@ export default function FeedbacksPanel({
           for (const fb of payload.feedbacks || []) {
             if (!seen.has(fb.id)) merged.push(fb);
           }
-          return {
-            ...payload,
-            feedbacks: merged,
-          };
+          return { ...payload, feedbacks: merged };
         });
         const count = payload.countUnanswered ?? payload.feedbacks?.length ?? 0;
         setCachedUnansweredCount(count);
-        onUnansweredCountChange?.(count);
         setStatus(`Без ответа: ${count}`);
       } catch (err) {
         setError(err.message || 'Ошибка загрузки');
-        if (!hasDataRef.current && !cachedCount && !append) {
-          onUnansweredCountChange?.(0);
-        }
       } finally {
         if (append) setLoadingMore(false);
         else {
@@ -323,7 +262,7 @@ export default function FeedbacksPanel({
         }
       }
     },
-    [token, dedicatedToken, onUnansweredCountChange, waitForRateLimit]
+    [token, waitForRateLimit]
   );
 
   const loadMoreFeedbacks = useCallback(() => {
@@ -345,17 +284,12 @@ export default function FeedbacksPanel({
 
   useEffect(() => {
     if (!token) return undefined;
-
     const cachedCount = getCachedUnansweredCount();
-    if (cachedCount != null) {
-      setStatus(`Без ответа: ${cachedCount}`);
-      onUnansweredCountChange?.(cachedCount);
-    }
-
+    if (cachedCount != null) setStatus(`Без ответа: ${cachedCount}`);
     loadAttemptRef.current = 0;
     loadFeedbacks();
     return undefined;
-  }, [token, loadFeedbacks, onUnansweredCountChange]);
+  }, [token, loadFeedbacks]);
 
   useEffect(() => {
     if (rateLimitCountdown <= 0) return undefined;
@@ -388,7 +322,7 @@ export default function FeedbacksPanel({
       setError('');
       const variationSeed = Date.now() + Math.floor(Math.random() * 10000);
       try {
-        const response = await fetch('/api/unit-calc/feedback-draft', {
+        const response = await fetch('/api/feedbacks/feedback-draft', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -396,7 +330,7 @@ export default function FeedbacksPanel({
           },
           body: JSON.stringify({
             feedback,
-            catalogRows,
+            catalogRows: [],
             regenerate,
             variationSeed,
           }),
@@ -429,7 +363,7 @@ export default function FeedbacksPanel({
         setGeneratingId(null);
       }
     },
-    [token, catalogRows]
+    [token]
   );
 
   const generateDraft = useCallback((feedback) => requestDraft(feedback, { regenerate: false }), [requestDraft]);
@@ -446,14 +380,14 @@ export default function FeedbacksPanel({
         return;
       }
       if (!token) {
-        setError(missingTokenMessage(dedicatedToken));
+        setError('Вставьте токен WB.');
         return;
       }
 
       setSendingId(feedback.id);
       setError('');
       try {
-        const response = await fetch('/api/unit-calc/feedbacks', {
+        const response = await fetch('/api/feedbacks/feedbacks', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -490,16 +424,22 @@ export default function FeedbacksPanel({
         setSendingId(null);
       }
     },
-    [token, dedicatedToken, drafts, loadFeedbacks]
+    [token, drafts, loadFeedbacks]
   );
 
   const feedbacks = data?.feedbacks || [];
   const countUnanswered = data?.countUnanswered ?? 0;
-  const hasMoreFeedbacks = countUnanswered > feedbacks.length;
-  const usingDedicatedToken = Boolean(String(dedicatedToken || '').trim());
-  const hasMore = hasMoreFeedbacks || (data?.hasMore ?? false);
+  const hasMore = countUnanswered > feedbacks.length || (data?.hasMore ?? false);
   const previewFeedback = previewId ? feedbacks.find((fb) => fb.id === previewId) : null;
   const previewDraft = previewId ? drafts[previewId] : null;
+
+  if (!token) {
+    return (
+      <section className="panel text-sm text-slate-600">
+        Сохраните токен WB выше — затем здесь появятся неотвеченные отзывы.
+      </section>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -507,96 +447,35 @@ export default function FeedbacksPanel({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-              Отзывы WB
+              Неотвеченные отзывы
               {countUnanswered > 0 ? (
                 <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
                   {countUnanswered}
                 </span>
               ) : null}
             </h2>
-            <TabDescription>
-              AI черновики с апселлом на более дорогие аналоги. Предпросмотр и перегенерация — отправка только
-              вручную.
-              {usingDedicatedToken ? (
-                <span className="mt-1 block text-xs text-emerald-700">
-                  Загрузка отзывов — отдельный токен «Вопросы и отзывы».
-                </span>
-              ) : null}
-            </TabDescription>
+            <p className="mt-1 text-sm text-slate-600">
+              AI-черновики с апселлом. Предпросмотр и перегенерация — отправка только вручную.
+            </p>
           </div>
           <button
             type="button"
             className="btn-secondary text-sm"
-            disabled={loading || !token}
+            disabled={loading}
             onClick={debouncedRefresh}
           >
             {loading ? 'Загрузка…' : 'Обновить'}
           </button>
         </div>
 
-        <WbTokenScopesHint
-          token={token}
-          collapsible
-          defaultOpen={false}
-          autoCheckOnLoad={false}
-          showCheckButton
-          className="mt-3"
-        />
-        <details className="mt-2 text-xs text-slate-500">
+        <details className="mt-3 text-xs text-slate-500">
           <summary className="cursor-pointer text-slate-600 hover:text-slate-800">
             AI-черновики: YandexGPT (из РФ) или OpenAI
           </summary>
           <div className="mt-2 space-y-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-600">
             <p>
-              <span className="font-medium text-slate-700">Рекомендуется из России — YandexGPT:</span>{' '}
-              openai.com не нужен, API работает через{' '}
-              <a
-                href="https://console.yandex.cloud/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-brand-700 underline"
-              >
-                console.yandex.cloud
-              </a>
-              .
-            </p>
-            <ol className="list-decimal space-y-1 pl-4">
-              <li>
-                Зарегистрируйтесь в{' '}
-                <a
-                  href="https://console.yandex.cloud/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-brand-700 underline"
-                >
-                  Yandex Cloud
-                </a>{' '}
-                и создайте каталог (folder).
-              </li>
-              <li>
-                Включите сервис{' '}
-                <a
-                  href="https://console.yandex.cloud/folders?section=ai"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-brand-700 underline"
-                >
-                  Foundation Models
-                </a>{' '}
-                и создайте API-ключ (тип «Api-Key»).
-              </li>
-              <li>
-                Скопируйте ID каталога (например <code className="rounded bg-white px-1">b1g…</code>) и ключ.
-              </li>
-              <li>
-                В Vercel → Settings → Environment Variables добавьте{' '}
-                <code className="rounded bg-white px-1">YANDEX_GPT_API_KEY</code> и{' '}
-                <code className="rounded bg-white px-1">YANDEX_FOLDER_ID</code>, затем redeploy.
-              </li>
-            </ol>
-            <p className="text-slate-500">
-              Опционально: <code className="rounded bg-white px-1">OPENAI_API_KEY</code> — если есть доступ к
-              OpenAI (используется как запасной вариант, если YandexGPT недоступен).
+              На сервере Vercel задайте <code className="rounded bg-white px-1">YANDEX_GPT_API_KEY</code> и{' '}
+              <code className="rounded bg-white px-1">YANDEX_FOLDER_ID</code> — см. README в репозитории.
             </p>
           </div>
         </details>
@@ -604,46 +483,24 @@ export default function FeedbacksPanel({
         {error ? (
           <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
             <p>{error}</p>
-            {rateLimitCountdown > 0 ? (
-              <button
-                type="button"
-                className="btn-secondary mt-2 text-xs"
-                disabled={rateLimitCountdown > 0 || loading}
-                onClick={() => {
-                  loadAttemptRef.current = 0;
-                  clearFeedbacksRateLimit();
-                  loadFeedbacks({ force: true });
-                }}
-              >
-                {rateLimitCountdown > 0
-                  ? `Повторить через ${rateLimitCountdown} сек`
-                  : 'Повторить загрузку'}
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn-secondary mt-2 text-xs"
-                disabled={loading}
-                onClick={() => {
-                  loadAttemptRef.current = 0;
-                  loadFeedbacks({ force: true });
-                }}
-              >
-                Повторить загрузку
-              </button>
-            )}
+            <button
+              type="button"
+              className="btn-secondary mt-2 text-xs"
+              disabled={loading || rateLimitCountdown > 0}
+              onClick={() => {
+                loadAttemptRef.current = 0;
+                clearFeedbacksRateLimit();
+                loadFeedbacks({ force: true });
+              }}
+            >
+              {rateLimitCountdown > 0 ? `Повторить через ${rateLimitCountdown} сек` : 'Повторить загрузку'}
+            </button>
           </div>
         ) : null}
         {status ? <p className="mt-2 text-xs text-slate-600">{status}</p> : null}
       </section>
 
-      {!token ? (
-        <section className="panel text-sm text-slate-600">
-          {missingTokenMessage(dedicatedToken)}
-        </section>
-      ) : null}
-
-      {token && !loading && feedbacks.length === 0 && !error ? (
+      {!loading && feedbacks.length === 0 && !error ? (
         <section className="panel text-sm text-slate-600">
           {data ? 'Нет неотвеченных отзывов — отлично!' : 'Загрузка отзывов…'}
         </section>
@@ -662,17 +519,12 @@ export default function FeedbacksPanel({
                   <div className="flex flex-wrap items-center gap-2">
                     <Stars rating={fb.rating} />
                     <span className="text-xs text-slate-500">{formatDate(fb.createdDate)}</span>
-                    {fb.userName ? (
-                      <span className="text-xs text-slate-500">· {fb.userName}</span>
-                    ) : null}
+                    {fb.userName ? <span className="text-xs text-slate-500">· {fb.userName}</span> : null}
                   </div>
                   <p className="mt-1 text-sm font-medium text-slate-800">
                     {fb.productName || 'Товар'}
                     {fb.article ? (
                       <span className="ml-2 font-normal text-slate-500">арт. {fb.article}</span>
-                    ) : null}
-                    {fb.nmId ? (
-                      <span className="ml-1 font-normal text-slate-400">nm {fb.nmId}</span>
                     ) : null}
                   </p>
                 </div>
@@ -717,17 +569,8 @@ export default function FeedbacksPanel({
                       className="btn-secondary text-sm"
                       disabled={generatingId === fb.id || !draft?.text}
                       onClick={() => regenerateDraft(fb)}
-                      title="AI напишет другой вариант формулировки"
                     >
                       Перегенерировать
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary text-sm"
-                      disabled={!draft?.text?.trim()}
-                      onClick={() => setPreviewId(fb.id)}
-                    >
-                      Предпросмотр
                     </button>
                     <button
                       type="button"
@@ -743,20 +586,13 @@ export default function FeedbacksPanel({
                     <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                       <span className="font-medium text-slate-700">SKU в ответе: </span>
                       арт. {upsell.article} — {upsell.title}
-                      {upsell.priceLabel || upsell.price ? (
-                        <span className="text-slate-500">
-                          {' '}
-                          · {upsell.priceLabel || fmtMoney(upsell.price)}
-                          {upsell.priceDelta > 0 ? ` (+${fmtMoney(upsell.priceDelta)})` : ''}
-                        </span>
-                      ) : null}
                     </div>
                   ) : null}
 
                   <textarea
                     className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800"
                     rows={5}
-                    placeholder="Текст ответа (на «ты», без ссылок и скидок, 2–1000 символов)"
+                    placeholder="Текст ответа (на «ты», 2–1000 символов)"
                     value={draft?.text || ''}
                     onChange={(e) =>
                       setDrafts((prev) => ({
@@ -766,7 +602,7 @@ export default function FeedbacksPanel({
                     }
                   />
                   <p className="mt-1 text-xs text-slate-400">
-                    {(draft?.text || '').length} / 1000 символов
+                    {(draft?.text || '').length} / 1000
                     {draft?.source ? ` · ${draft.source}` : ''}
                   </p>
                 </div>
@@ -776,7 +612,7 @@ export default function FeedbacksPanel({
         })}
       </div>
 
-      {token && hasMore ? (
+      {hasMore ? (
         <div className="flex justify-center">
           <button
             type="button"

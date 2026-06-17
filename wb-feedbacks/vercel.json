@@ -4,10 +4,13 @@
   "installCommand": "cd .. && npm install",
   "framework": null,
   "functions": {
-    "../api/unit-calc/sync.js": {
-      "maxDuration": 120
+    "../api/feedbacks/feedbacks.js": {
+      "maxDuration": 60
     },
-    "../api/unit-calc/fbs-assembly.js": {
+    "../api/feedbacks/feedback-draft.js": {
+      "maxDuration": 60
+    },
+    "../api/feedbacks/feedbacks-check.js": {
       "maxDuration": 60
     }
   },

@@ -5,7 +5,7 @@ import { canAccessSection } from '@lib/team-permissions.js';
 const NAV = [
   { id: 'calc', label: 'Расчёты', hint: 'Таблица и сводка' },
   { id: 'fbs', label: 'FBS', hint: 'Сборка заказов и поставки' },
-  { id: 'feedbacks', label: 'Отзывы', hint: 'Ответы на отзывы WB' },
+  { id: 'feedbacks', label: 'Отзывы', hint: 'Отдельный сервис AI-ответов' },
   { id: 'regions', label: 'Регионы', hint: 'Спрос по городам и складам' },
   { id: 'returns', label: 'Возвраты', hint: 'Факт возвратов и обратная логистика' },
   { id: 'logistics', label: 'Логистика', hint: 'Сверка расчёта с отчётом WB' },

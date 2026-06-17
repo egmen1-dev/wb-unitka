@@ -12,7 +12,7 @@ import ActualPnlPanel from './components/ActualPnlPanel';
 import RegionsPanel from './components/RegionsPanel';
 import ReturnsPanel from './components/ReturnsPanel';
 import FbsAssemblyPanel from './components/FbsAssemblyPanel';
-import FeedbacksPanel from './components/FeedbacksPanel';
+import FeedbacksExternalLink from './components/FeedbacksExternalLink';
 import SupplierPricePanel from './components/SupplierPricePanel';
 import TeamPanel from './components/TeamPanel';
 import TeamPermissionsPanel from './components/TeamPermissionsPanel';
@@ -60,7 +60,6 @@ import {
   loadSettings,
   loadSupplierCatalogs,
   loadWbProductCache,
-  loadWbFeedbacksToken,
   loadWorkspaceCache,
   saveWorkspaceCache,
   clearWorkspaceCache,
@@ -70,16 +69,13 @@ import {
   savePurchases,
   saveSettings,
   saveSupplierCatalogs,
-  saveWbFeedbacksToken,
   saveWbProductCache,
-  resolveWbFeedbacksToken,
 } from './lib/storage';
 import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';
 import { buildEffectiveWbCache } from '@lib/wb-sync-cache.js';
 import { createRecalcRows } from './lib/recalc-rows-cache';
 import { setProductOverride } from './lib/product-overrides';
 import { readJsonResponse } from './lib/http';
-import { getCachedUnansweredCount, setCachedUnansweredCount } from './lib/feedbacks-cache';
 import { isAdvertRateLimitMessage } from '@lib/wb-advert-stats.js';
 
 function readBootCache() {
@@ -221,10 +217,6 @@ function applyWorkspacePayload(payload, setters, { keepRows = [], keepProfiles =
     setters.setSettingsUpdatedAt(payload.settingsUpdatedAt || '');
   }
 
-  if (payload.wbFeedbacksToken !== undefined && setters.setWbFeedbacksToken) {
-    setters.setWbFeedbacksToken(payload.wbFeedbacksToken || '');
-  }
-
   if (payload.teamAccess !== undefined) {
     setters.setTeamAccess(normalizeTeamAccess(payload.teamAccess));
   }
@@ -289,9 +281,6 @@ export default function App() {
   }, [cloudStatus]);
 
   const [profiles, setProfiles] = useState(() => bootProfiles(bootPayload));
-  const [wbFeedbacksToken, setWbFeedbacksToken] = useState(
-    () => bootPayload?.wbFeedbacksToken || loadWbFeedbacksToken()
-  );
   const [activeProfileId, setActiveProfileId] = useState(() => {
     const initialProfiles = bootProfiles(bootPayload);
     return bootActiveProfileId(bootPayload, initialProfiles);
@@ -359,8 +348,6 @@ export default function App() {
   const [brandFilter, setBrandFilter] = useState([]);
   const [highlightNmId, setHighlightNmId] = useState(null);
   const [dashboardQuery, setDashboardQuery] = useState('');
-  const [feedbacksUnansweredCount, setFeedbacksUnansweredCount] = useState(0);
-
   const skipCloudSave = useRef(true);
   const syncRunId = useRef(0);
   const persistTimer = useRef(null);
@@ -372,11 +359,6 @@ export default function App() {
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeProfileId) || profiles[0],
     [profiles, activeProfileId]
-  );
-
-  const feedbacksApiToken = useMemo(
-    () => resolveWbFeedbacksToken(wbFeedbacksToken, activeProfile?.token),
-    [wbFeedbacksToken, activeProfile?.token]
   );
 
   const activeCatalog = useMemo(() => getActiveCatalog(supplierCatalogs), [supplierCatalogs]);
@@ -410,18 +392,6 @@ export default function App() {
   );
 
   const canSyncWb = !team || myPermissions.data || myPermissions.calc;
-
-  useEffect(() => {
-    if (!feedbacksApiToken || (!canAccessSection('feedbacks', myPermissions) && team)) {
-      setFeedbacksUnansweredCount(0);
-      return;
-    }
-
-    const cached = getCachedUnansweredCount();
-    if (cached != null) {
-      setFeedbacksUnansweredCount(cached);
-    }
-  }, [feedbacksApiToken, team, myPermissions]);
 
   const changeSection = useCallback(
     (id) => {
@@ -482,7 +452,6 @@ export default function App() {
     const payload = buildWorkspacePayload({
       profiles,
       activeProfileId,
-      wbFeedbacksToken,
       purchases,
       settings,
       settingsUpdatedAt,
@@ -507,7 +476,6 @@ export default function App() {
     ownerClientId,
     profiles,
     activeProfileId,
-    wbFeedbacksToken,
     purchases,
     settings,
     settingsUpdatedAt,
@@ -532,7 +500,6 @@ export default function App() {
           setTeamAccess,
           setProfiles,
           setActiveProfileId,
-          setWbFeedbacksToken,
           setPurchases,
           setSettings,
           setSettingsUpdatedAt,
@@ -695,7 +662,6 @@ export default function App() {
     persistTimer.current = setTimeout(() => {
       saveProfiles(profiles);
       saveActiveProfileId(activeProfileId);
-      saveWbFeedbacksToken(wbFeedbacksToken);
       savePurchases(purchases);
       saveSettings(settings);
       saveSupplierCatalogs(supplierCatalogs);
@@ -707,7 +673,6 @@ export default function App() {
   }, [
     profiles,
     activeProfileId,
-    wbFeedbacksToken,
     purchases,
     settings,
     supplierCatalogs,
@@ -1211,7 +1176,6 @@ export default function App() {
           teamAccess: initialAccess,
           profiles: [],
           activeProfileId: '',
-          wbFeedbacksToken: null,
           purchases: {},
           settings: mergeUnitSettings({}),
           settingsUpdatedAt: new Date().toISOString(),
@@ -1222,7 +1186,6 @@ export default function App() {
       : buildWorkspacePayload({
           profiles,
           activeProfileId,
-          wbFeedbacksToken,
           purchases,
           settings,
           settingsUpdatedAt: settingsUpdatedAt || new Date().toISOString(),
@@ -1255,7 +1218,6 @@ export default function App() {
     if (fresh) {
       setProfiles([]);
       setActiveProfileId('');
-      setWbFeedbacksToken('');
       setPurchases({});
       setProductOverrides({});
       setSupplierCatalogs({});
@@ -1269,7 +1231,6 @@ export default function App() {
         setTeamAccess,
         setProfiles,
         setActiveProfileId,
-        setWbFeedbacksToken,
         setPurchases,
         setSettings,
         setSettingsUpdatedAt,
@@ -1435,7 +1396,6 @@ export default function App() {
           </span>
         )
       }
-      navBadges={{ feedbacks: feedbacksUnansweredCount }}
     >
       <UpdateBanner />
       {error ? (
@@ -1563,21 +1523,7 @@ export default function App() {
         )
       ) : null}
 
-      {section === 'feedbacks' ? (
-        canAccessSection('feedbacks', myPermissions) || !team ? (
-          <FeedbacksPanel
-            token={feedbacksApiToken}
-            dedicatedToken={wbFeedbacksToken}
-            rows={rows}
-            onUnansweredCountChange={setFeedbacksUnansweredCount}
-          />
-        ) : (
-          <SectionAccessDenied
-            title="Раздел «Отзывы» недоступен"
-            onBack={() => changeSection(firstAllowedSection(myPermissions))}
-          />
-        )
-      ) : null}
+      {section === 'feedbacks' ? <FeedbacksExternalLink /> : null}
 
       {section === 'regions' ? (
         canAccessSection('regions', myPermissions) || !team ? (
@@ -1675,8 +1621,6 @@ export default function App() {
             onProfilesChange={setProfiles}
             onActiveChange={setActiveProfileId}
             onProfileAdded={handleProfileAdded}
-            wbFeedbacksToken={wbFeedbacksToken}
-            onWbFeedbacksTokenChange={setWbFeedbacksToken}
             teamMode={Boolean(team)}
           />
           <SupplierPricePanel

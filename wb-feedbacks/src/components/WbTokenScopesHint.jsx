@@ -8,35 +8,34 @@ import {
   setFeedbacksRateLimited,
 } from '../lib/feedbacks-cache';
 
-/** Категории токена WB для вкладки «Отзывы» (дублирует lib/wb-token-scopes.js для UI). */
 export const FEEDBACKS_TOKEN_CATEGORIES = [
   {
     id: 'feedbacks',
     label: 'Вопросы и отзывы',
     required: true,
     purpose: 'Список, счётчик, просмотр и ответ на отзывы',
-    withoutScope: 'Вкладка не работает: нельзя загрузить отзывы и отправить ответ',
+    withoutScope: 'Нельзя загрузить отзывы и отправить ответ',
   },
   {
     id: 'content',
     label: 'Контент',
     required: true,
-    purpose: 'Артикул, характеристики, описание, nmId, subjectId — для AI-черновика',
-    withoutScope: 'Черновик по названию из каталога, без описания и характеристик с WB',
+    purpose: 'Артикул, характеристики, описание — для AI-черновика',
+    withoutScope: 'Черновик только по названию из отзыва',
   },
   {
     id: 'prices',
     label: 'Цены и скидки',
     recommended: true,
-    purpose: 'Цена товара и дорогих аналогов для премиум-апселла',
-    withoutScope: 'Апселл по артикулу без цены и дельты «+N ₽ к текущему»',
+    purpose: 'Цена товара и аналогов для премиум-апселла',
+    withoutScope: 'Апселл без суммы «+N ₽»',
   },
   {
     id: 'statistics',
     label: 'Статистика',
     optional: true,
-    purpose: 'Сводный рейтинг SKU в каталоге',
-    withoutScope: 'Рейтинг в отзыве есть из API отзывов; сводный рейтинг SKU не обновится',
+    purpose: 'Сводный рейтинг SKU',
+    withoutScope: 'Рейтинг в отзыве есть из API отзывов',
   },
 ];
 
@@ -48,7 +47,7 @@ export default function WbTokenScopesHint({
   showCheckButton = true,
   autoCheckOnLoad = false,
   className = '',
-  title = 'Категории токена WB для отзывов',
+  title = 'Категории токена WB',
 }) {
   const [open, setOpen] = useState(!collapsible || defaultOpen);
   const [checking, setChecking] = useState(false);
@@ -57,7 +56,7 @@ export default function WbTokenScopesHint({
 
   const runCheck = useCallback(async ({ force = false } = {}) => {
     if (!token) {
-      setCheckError('Сначала добавьте API-ключ WB.');
+      setCheckError('Сначала добавьте токен WB.');
       return;
     }
 
@@ -79,7 +78,7 @@ export default function WbTokenScopesHint({
     setCheckError('');
     setCheckResult(null);
     try {
-      const response = await fetch('/api/unit-calc/feedbacks-check', {
+      const response = await fetch('/api/feedbacks/feedbacks-check', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -143,11 +142,7 @@ export default function WbTokenScopesHint({
       {categories.map((cat) => {
         const status = scopeStatus(cat.label);
         const probe = scopeResult(cat.label);
-        const badge = cat.required
-          ? 'обязательно'
-          : cat.recommended
-            ? 'рекомендуется'
-            : 'опционально';
+        const badge = cat.required ? 'обязательно' : cat.recommended ? 'рекомендуется' : 'опционально';
         const badgeClass = cat.required
           ? 'text-rose-600'
           : cat.recommended
@@ -158,13 +153,9 @@ export default function WbTokenScopesHint({
           <li key={cat.id || cat.label} className="flex gap-2 text-xs text-slate-600">
             <span className="mt-0.5 shrink-0" aria-hidden>
               {status === 'ok' ? (
-                <span className="text-emerald-600" title="Доступ есть">
-                  ✓
-                </span>
+                <span className="text-emerald-600">✓</span>
               ) : status === 'fail' ? (
-                <span className="text-rose-600" title="Нет доступа">
-                  ✗
-                </span>
+                <span className="text-rose-600">✗</span>
               ) : cat.required ? (
                 <span className="text-rose-500">●</span>
               ) : cat.recommended ? (
@@ -182,14 +173,7 @@ export default function WbTokenScopesHint({
                 <span className="mt-0.5 block text-slate-400">Без права: {cat.withoutScope}</span>
               ) : null}
               {status === 'fail' && probe?.error ? (
-                <details className="mt-0.5 text-slate-400">
-                  <summary className="cursor-pointer select-none">Детали проверки</summary>
-                  <span className="mt-0.5 block font-mono text-[10px] leading-snug text-slate-500">
-                    {probe.error}
-                    {probe.functional?.status ? ` · API ${probe.functional.status}` : ''}
-                    {probe.ping?.status ? ` · ping ${probe.ping.status}` : ''}
-                  </span>
-                </details>
+                <span className="mt-0.5 block font-mono text-[10px] text-slate-500">{probe.error}</span>
               ) : null}
             </span>
           </li>
@@ -201,13 +185,11 @@ export default function WbTokenScopesHint({
   const body = (
     <>
       {list}
-
       {!compact ? (
         <p className="mt-2 text-xs text-slate-400">
-          Создайте токен в ЛК WB: Профиль → Настройки → Доступ к API. Включите нужные категории.
+          ЛК WB → Профиль → Настройки → Доступ к API → включите нужные категории.
         </p>
       ) : null}
-
       {showCheckButton ? (
         <div className={`${compact ? 'mt-2' : 'mt-3'} flex flex-wrap items-center gap-2`}>
           <button
@@ -227,7 +209,6 @@ export default function WbTokenScopesHint({
           ) : null}
         </div>
       ) : null}
-
       {checkError ? <p className="mt-2 text-xs text-rose-600">{checkError}</p> : null}
     </>
   );

@@ -202,14 +202,14 @@ export default async function handler(req, res) {
       source = regenerate ? 'yandex-regen' : 'yandex';
       provider = 'yandex';
     } catch (error) {
-      console.error('[unit-calc/feedback-draft] YandexGPT', error);
+      console.error('[feedbacks/feedback-draft] YandexGPT', error);
       if (openaiKey) {
         try {
           draft = await generateWithOpenAI(prompt, openaiKey, { regenerate, variationSeed });
           source = regenerate ? 'openai-regen' : 'openai';
           provider = 'openai';
         } catch (openaiError) {
-          console.error('[unit-calc/feedback-draft] OpenAI fallback', openaiError);
+          console.error('[feedbacks/feedback-draft] OpenAI fallback', openaiError);
           draft = buildTemplateFallback(templateArgs);
           source = 'template-fallback';
           provider = 'template';
@@ -226,7 +226,7 @@ export default async function handler(req, res) {
       source = regenerate ? 'openai-regen' : 'openai';
       provider = 'openai';
     } catch (error) {
-      console.error('[unit-calc/feedback-draft] OpenAI', error);
+      console.error('[feedbacks/feedback-draft] OpenAI', error);
       draft = buildTemplateFallback(templateArgs);
       source = 'template-fallback';
       provider = 'template';

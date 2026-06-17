@@ -33,7 +33,7 @@ export default async function handler(req, res) {
       categories: WB_FEEDBACKS_TOKEN_SCOPES,
     });
   } catch (error) {
-    console.error('[unit-calc/feedbacks-check]', error);
+    console.error('[feedbacks/feedbacks-check]', error);
 
     if (error instanceof WbFeedbacksRateLimitError || error?.code === 'RATE_LIMIT') {
       const retryAfterSec = error.retryAfterSec || 5;
