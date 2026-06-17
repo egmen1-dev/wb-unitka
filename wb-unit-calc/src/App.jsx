@@ -12,6 +12,7 @@ import ActualPnlPanel from './components/ActualPnlPanel';
 import RegionsPanel from './components/RegionsPanel';
 import ReturnsPanel from './components/ReturnsPanel';
 import FbsAssemblyPanel from './components/FbsAssemblyPanel';
+import FeedbacksPanel from './components/FeedbacksPanel';
 import SupplierPricePanel from './components/SupplierPricePanel';
 import TeamPanel from './components/TeamPanel';
 import TeamPermissionsPanel from './components/TeamPermissionsPanel';
@@ -347,6 +348,7 @@ export default function App() {
   const [brandFilter, setBrandFilter] = useState([]);
   const [highlightNmId, setHighlightNmId] = useState(null);
   const [dashboardQuery, setDashboardQuery] = useState('');
+  const [feedbacksUnansweredCount, setFeedbacksUnansweredCount] = useState(0);
 
   const skipCloudSave = useRef(true);
   const syncRunId = useRef(0);
@@ -392,6 +394,38 @@ export default function App() {
   );
 
   const canSyncWb = !team || myPermissions.data || myPermissions.calc;
+
+  useEffect(() => {
+    const token = activeProfile?.token;
+    if (!token || (!canAccessSection('feedbacks', myPermissions) && team)) {
+      setFeedbacksUnansweredCount(0);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch('/api/unit-calc/feedbacks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ action: 'count' }),
+        });
+        const { data } = await readJsonResponse(response);
+        if (!cancelled && response.ok) {
+          setFeedbacksUnansweredCount(Number(data.countUnanswered) || 0);
+        }
+      } catch {
+        if (!cancelled) setFeedbacksUnansweredCount(0);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfile?.token, team, myPermissions]);
 
   const changeSection = useCallback(
     (id) => {
@@ -1395,6 +1429,7 @@ export default function App() {
           </span>
         )
       }
+      navBadges={{ feedbacks: feedbacksUnansweredCount }}
     >
       <UpdateBanner />
       {error ? (
@@ -1517,6 +1552,21 @@ export default function App() {
         ) : (
           <SectionAccessDenied
             title="Раздел «FBS» недоступен"
+            onBack={() => changeSection(firstAllowedSection(myPermissions))}
+          />
+        )
+      ) : null}
+
+      {section === 'feedbacks' ? (
+        canAccessSection('feedbacks', myPermissions) || !team ? (
+          <FeedbacksPanel
+            token={activeProfile?.token}
+            rows={rows}
+            onUnansweredCountChange={setFeedbacksUnansweredCount}
+          />
+        ) : (
+          <SectionAccessDenied
+            title="Раздел «Отзывы» недоступен"
             onBack={() => changeSection(firstAllowedSection(myPermissions))}
           />
         )

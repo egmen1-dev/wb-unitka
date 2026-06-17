@@ -9,6 +9,12 @@
     },
     "../api/unit-calc/fbs-assembly.js": {
       "maxDuration": 60
+    },
+    "../api/unit-calc/feedbacks.js": {
+      "maxDuration": 60
+    },
+    "../api/unit-calc/feedback-draft.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

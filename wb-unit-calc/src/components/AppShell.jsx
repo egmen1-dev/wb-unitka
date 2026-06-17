@@ -5,6 +5,7 @@ import { canAccessSection } from '@lib/team-permissions.js';
 const NAV = [
   { id: 'calc', label: 'Расчёты', hint: 'Таблица и сводка' },
   { id: 'fbs', label: 'FBS', hint: 'Сборка заказов и поставки' },
+  { id: 'feedbacks', label: 'Отзывы', hint: 'Ответы на отзывы WB' },
   { id: 'regions', label: 'Регионы', hint: 'Спрос по городам и складам' },
   { id: 'returns', label: 'Возвраты', hint: 'Факт возвратов и обратная логистика' },
   { id: 'logistics', label: 'Логистика', hint: 'Сверка расчёта с отчётом WB' },
@@ -28,6 +29,17 @@ function NavIcon({ id }) {
     return (
       <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+      </svg>
+    );
+  }
+  if (id === 'feedbacks') {
+    return (
+      <svg className={cls} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M7.5 8.25h9m-9 3H12m-8.25 13.5l3.75-3.75h9.75a2.25 2.25 0 002.25-2.25v-9A2.25 2.25 0 0017.25 3.75H6.75A2.25 2.25 0 004.5 6v9a2.25 2.25 0 002.25 2.25z"
+        />
       </svg>
     );
   }
@@ -100,6 +112,7 @@ export default function AppShell({
   hasTeam = false,
   headerActions,
   syncBar,
+  navBadges = {},
   children,
 }) {
   const navItems = NAV.filter((item) => {
@@ -134,6 +147,11 @@ export default function AppShell({
                 >
                   <NavIcon id={item.id} />
                   {item.label}
+                  {navBadges[item.id] > 0 ? (
+                    <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                      {navBadges[item.id] > 99 ? '99+' : navBadges[item.id]}
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </nav>
@@ -152,6 +170,11 @@ export default function AppShell({
                 onClick={() => onSectionChange(item.id)}
               >
                 {item.label}
+                {navBadges[item.id] > 0 ? (
+                  <span className="ml-1 rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                    {navBadges[item.id] > 99 ? '99+' : navBadges[item.id]}
+                  </span>
+                ) : null}
               </button>
             ))}
           </nav>
