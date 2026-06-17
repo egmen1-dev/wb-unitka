@@ -5,6 +5,16 @@ let countCache = null;
 let scopeCheckCache = null;
 let rateLimitUntil = 0;
 
+/** Drop expired or corrupt rate-limit locks on boot / refresh. */
+export function clearStaleFeedbacksCacheOnBoot() {
+  if (rateLimitUntil > 0 && Date.now() >= rateLimitUntil) {
+    rateLimitUntil = 0;
+  }
+  if (rateLimitUntil > Date.now() + 120_000) {
+    rateLimitUntil = 0;
+  }
+}
+
 export function getCachedUnansweredCount() {
   if (!countCache) return null;
   if (Date.now() - countCache.at > COUNT_TTL_MS) return null;

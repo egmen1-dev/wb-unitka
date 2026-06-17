@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import FeedbacksPanel from './components/FeedbacksPanel';
 import TokenPanel from './components/TokenPanel';
 import { APP_BUILD } from './lib/app-build';
+import { clearStaleFeedbacksCacheOnBoot } from './lib/feedbacks-cache';
 import { loadToken, saveToken } from './lib/storage';
 
 function BootStatus({ error }) {
@@ -19,6 +20,10 @@ function BootStatus({ error }) {
 export default function App() {
   const [token, setToken] = useState(() => loadToken());
   const [bootError, setBootError] = useState(null);
+
+  useEffect(() => {
+    clearStaleFeedbacksCacheOnBoot();
+  }, []);
 
   useEffect(() => {
     saveToken(token);

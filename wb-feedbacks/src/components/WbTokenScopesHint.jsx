@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { readJsonResponse } from '../lib/http';
+import { fetchWithTimeout, readJsonResponse } from '../lib/http';
 import {
   getCachedScopeCheck,
   isFeedbacksRateLimited,
@@ -78,7 +78,7 @@ export default function WbTokenScopesHint({
     setCheckError('');
     setCheckResult(null);
     try {
-      const response = await fetch('/api/feedbacks/feedbacks-check', {
+      const response = await fetchWithTimeout('/api/feedbacks/feedbacks-check', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
