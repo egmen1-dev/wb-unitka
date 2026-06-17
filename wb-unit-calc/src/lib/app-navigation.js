@@ -1,4 +1,18 @@
-export const APP_SECTIONS = ['calc', 'fbs', 'regions', 'returns', 'logistics', 'pnl', 'data', 'team', 'admin', 'settings'];
+export const APP_SECTIONS = [
+  'calc',
+  'fbs',
+  'feedbacks',
+  'regions',
+  'returns',
+  'logistics',
+  'pnl',
+  'data',
+  'team',
+  'admin',
+  'settings',
+];
+
+const TAB_ALIASES = { reviews: 'feedbacks' };
 
 const SECTION_KEY = 'wb-unit-calc:section';
 
@@ -6,10 +20,17 @@ function isValidSection(id) {
   return APP_SECTIONS.includes(id);
 }
 
+function resolveTabId(tab) {
+  const normalized = tab?.trim().toLowerCase();
+  if (!normalized) return null;
+  const resolved = TAB_ALIASES[normalized] || normalized;
+  return isValidSection(resolved) ? resolved : null;
+}
+
 /** Активный раздел из ?tab= в URL. */
 export function readSectionFromUrl() {
-  const tab = new URLSearchParams(window.location.search).get('tab')?.trim().toLowerCase();
-  return isValidSection(tab) ? tab : null;
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return resolveTabId(tab);
 }
 
 export function loadStoredSection() {
