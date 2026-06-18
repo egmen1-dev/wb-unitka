@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchFeedbacksApi, isRateLimitError } from '../lib/wb-api-queue';
 import {
   getCachedScopeCheck,
-  isFeedbacksRateLimited,
-  getFeedbacksRateLimitSecondsLeft,
+  isFeedbacksReadRateLimited,
+  getFeedbacksReadRateLimitSecondsLeft,
   setCachedScopeCheck,
   setFeedbacksRateLimited,
 } from '../lib/feedbacks-cache';
@@ -61,10 +61,10 @@ export default function WbTokenScopesHint({
       return;
     }
 
-    if (!force && isFeedbacksRateLimited()) {
-      const sec = getFeedbacksRateLimitSecondsLeft();
+    if (!force && isFeedbacksReadRateLimited()) {
+      const sec = getFeedbacksReadRateLimitSecondsLeft();
       pendingCheckRef.current = true;
-      setCheckError(`Лимит WB API — проверка через ${sec} сек`);
+      setCheckError(`В очереди · проверка через ${sec} сек`);
       return;
     }
 
@@ -81,14 +81,18 @@ export default function WbTokenScopesHint({
     setCheckResult(null);
     pendingCheckRef.current = false;
     try {
-      const { response, payload } = await fetchFeedbacksApi('/api/feedbacks/feedbacks-check', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+      const { response, payload } = await fetchFeedbacksApi(
+        '/api/feedbacks/feedbacks-check',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({}),
         },
-        body: JSON.stringify({}),
-      });
+        { kind: 'read' }
+      );
       if (!response.ok) {
         throw new Error(payload.error || 'Проверка не удалась');
       }
@@ -97,9 +101,9 @@ export default function WbTokenScopesHint({
     } catch (err) {
       if (isRateLimitError(err)) {
         const sec = Number(err.retryAfterSec) || 5;
-        setFeedbacksRateLimited(sec);
+        setFeedbacksRateLimited(sec, { kind: 'read' });
         pendingCheckRef.current = true;
-        setCheckError(`Лимит WB API — повтор через ${sec} сек…`);
+        setCheckError(`В очереди · повтор через ${sec} сек…`);
       } else {
         setCheckError(err.message || 'Ошибка проверки');
       }
@@ -123,7 +127,7 @@ export default function WbTokenScopesHint({
 
   useEffect(() => {
     if (!pendingCheckRef.current || checking || !token) return undefined;
-    const sec = getFeedbacksRateLimitSecondsLeft();
+    const sec = getFeedbacksReadRateLimitSecondsLeft();
     if (sec > 0) {
       const timer = setTimeout(() => {
         if (pendingCheckRef.current) runCheck({ force: true });

@@ -1,11 +1,15 @@
 import { AUTO_REPLY_INTERVAL_MS, AUTO_REPLY_MAX_PER_HOUR, isDraftSafeForAutoSend } from '@lib/feedback-auto-reply.js';
 import { fetchWithTimeout, readJsonResponse } from './http';
-import { isFeedbacksRateLimited, getFeedbacksRateLimitSecondsLeft } from './feedbacks-cache';
+import {
+  getFeedbacksReadRateLimitSecondsLeft,
+  isFeedbacksReadRateLimited,
+} from './feedbacks-cache';
 import { fetchFeedbacksApi, isRateLimitError } from './wb-api-queue';
 
 export { AUTO_REPLY_INTERVAL_MS, AUTO_REPLY_MAX_PER_HOUR, isDraftSafeForAutoSend };
 const HOUR_MS = 3_600_000;
 const LOG_MAX = 50;
+const POST_REFRESH_DELAY_MS = 15_000;
 
 const STORAGE_ENABLED = 'wb-feedbacks:auto-reply:enabled';
 const STORAGE_LOG = 'wb-feedbacks:auto-reply:log';
@@ -119,18 +123,23 @@ async function requestDraft(token, feedback, { regenerate = false } = {}) {
 }
 
 async function postAnswer(token, feedbackId, text) {
-  const { response, payload } = await fetchFeedbacksApi('/api/feedbacks/feedbacks', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
+  const { response, payload } = await fetchFeedbacksApi(
+    '/api/feedbacks/feedbacks',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        action: 'answer',
+        feedbackId,
+        text,
+        skipVerify: true,
+      }),
     },
-    body: JSON.stringify({
-      action: 'answer',
-      feedbackId,
-      text,
-    }),
-  });
+    { kind: 'write', maxRetries: 5 }
+  );
   if (!response.ok) {
     const err = new Error(payload?.error || 'Не удалось отправить ответ');
     err.status = response.status;
@@ -141,14 +150,18 @@ async function postAnswer(token, feedbackId, text) {
 }
 
 async function fetchUnanswered(token, take = 20) {
-  const { response, payload } = await fetchFeedbacksApi('/api/feedbacks/feedbacks', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
+  const { response, payload } = await fetchFeedbacksApi(
+    '/api/feedbacks/feedbacks',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ action: 'list', take, skip: 0 }),
     },
-    body: JSON.stringify({ action: 'list', take, skip: 0 }),
-  });
+    { kind: 'read' }
+  );
   if (!response.ok) throw new Error(payload?.error || 'Не удалось загрузить отзывы');
   return payload.feedbacks || [];
 }
@@ -158,12 +171,13 @@ async function fetchUnanswered(token, take = 20) {
  *   token: string,
  *   getFeedbacks?: () => Array,
  *   onState?: (state: object) => void,
- *   onAfterSend?: () => void | Promise<void>,
+ *   onAfterSend?: (feedbackId: string) => void | Promise<void>,
  * }} options
  */
 export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfterSend }) {
   let enabled = false;
   let running = false;
+  let posting = false;
   let timer = null;
   let stopped = false;
   const skippedIds = new Set();
@@ -172,6 +186,7 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
     onState?.({
       enabled,
       running,
+      posting,
       sentThisHour: getSentThisHour(),
       nextInMs: getMsUntilNextSlot(),
       log: getAutoReplyLog(),
@@ -186,14 +201,14 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
     }
   }
 
-  function scheduleNext(delayMs) {
+  function scheduleNext(delayMs, status = 'ожидание') {
     clearTimer();
     if (!enabled || stopped) return;
     const wait = Math.max(5_000, delayMs ?? getMsUntilNextSlot());
     timer = setTimeout(() => {
       runCycle().catch(() => {});
     }, wait);
-    emit({ nextInMs: wait, status: 'ожидание' });
+    emit({ nextInMs: wait, status });
   }
 
   async function generateSafeDraft(feedback) {
@@ -220,15 +235,6 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
       return;
     }
 
-    if (isFeedbacksRateLimited()) {
-      const rateWait = getFeedbacksRateLimitSecondsLeft() * 1000;
-      if (rateWait > 0) {
-        emit({ status: `лимит WB · ${Math.ceil(rateWait / 1000)} сек` });
-        scheduleNext(rateWait);
-        return;
-      }
-    }
-
     if (getSentThisHour() >= AUTO_REPLY_MAX_PER_HOUR) {
       scheduleNext(getMsUntilNextSlot());
       return;
@@ -240,6 +246,14 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
     try {
       let feedbacks = getFeedbacks?.() || [];
       if (!feedbacks.length) {
+        if (isFeedbacksReadRateLimited()) {
+          const rateWait = getFeedbacksReadRateLimitSecondsLeft() * 1000;
+          emit({
+            status: `в очереди · лимит чтения WB ${Math.ceil(rateWait / 1000)} сек`,
+          });
+          scheduleNext(rateWait, `в очереди · ${Math.ceil(rateWait / 1000)} сек`);
+          return;
+        }
         feedbacks = await fetchUnanswered(token);
       }
 
@@ -271,7 +285,9 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
         return;
       }
 
-      emit({ status: `отправка · ${feedback.productName || feedback.id}` });
+      posting = true;
+      emit({ status: `отправка · ${feedback.productName || feedback.id}`, posting: true });
+
       await postAnswer(token, feedback.id, payload.draft.trim());
 
       const sentThisHour = recordSentTimestamp();
@@ -286,30 +302,38 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
         retried,
       });
 
-      await onAfterSend?.();
-      emit({ status: 'отправлен', sentThisHour });
+      posting = false;
+      emit({ status: 'отправлен', sentThisHour, posting: false });
+      setTimeout(() => {
+        onAfterSend?.(feedback.id);
+      }, POST_REFRESH_DELAY_MS);
       scheduleNext(AUTO_REPLY_INTERVAL_MS);
     } catch (err) {
+      posting = false;
       const reason = err.message || 'Ошибка';
+      const isRate = isRateLimitError(err);
       appendLog({
         at: new Date().toISOString(),
         feedbackId: null,
         productName: '',
         rating: null,
-        status: 'ошибка',
+        status: isRate ? 'в очереди' : 'ошибка',
         reason,
       });
-      emit({ status: `ошибка · ${reason}` });
+      emit({
+        status: isRate ? `в очереди · ${reason}` : `ошибка · ${reason}`,
+        posting: false,
+      });
 
       const retryAfterSec =
         Number(err.payload?.retryAfterSec) ||
         (isRateLimitError(err) ? Number(err.retryAfterSec) : 0) ||
         0;
       const backoff = retryAfterSec > 0 ? retryAfterSec * 1000 : AUTO_REPLY_INTERVAL_MS;
-      scheduleNext(backoff);
+      scheduleNext(backoff, isRate ? `в очереди · ${Math.ceil(backoff / 1000)} сек` : undefined);
     } finally {
       running = false;
-      emit({ running: false });
+      emit({ running: false, posting: false });
     }
   }
 
@@ -327,7 +351,7 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
       stopped = true;
       saveAutoReplyEnabled(false);
       clearTimer();
-      emit({ status: 'остановлен' });
+      emit({ status: 'остановлен', posting: false });
     },
     refresh() {
       emit();
@@ -338,5 +362,6 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
       clearTimer();
     },
     isEnabled: () => enabled,
+    isPosting: () => posting,
   };
 }

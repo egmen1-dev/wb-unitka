@@ -5,7 +5,8 @@ const SCOPE_TTL_MS = 90_000;
 
 let countCache = null;
 let scopeCheckCache = null;
-let rateLimitUntil = 0;
+let readRateLimitUntil = 0;
+let writeRateLimitUntil = 0;
 
 function tokenFingerprint(token) {
   const s = String(token || '').trim();
@@ -25,6 +26,25 @@ function readStorageEntry() {
   } catch {
     return null;
   }
+}
+
+function clearRateLimitSlot(slot) {
+  if (slot === 'read') readRateLimitUntil = 0;
+  else if (slot === 'write') writeRateLimitUntil = 0;
+  else {
+    readRateLimitUntil = 0;
+    writeRateLimitUntil = 0;
+  }
+}
+
+function isSlotRateLimited(until) {
+  if (until > 0 && Date.now() >= until) return false;
+  return until > 0 && Date.now() < until;
+}
+
+function secondsLeft(until) {
+  const left = Math.ceil((until - Date.now()) / 1000);
+  return left > 0 ? left : 0;
 }
 
 /** Drop expired or corrupt rate-limit locks and stale localStorage on boot / refresh. */
@@ -118,26 +138,61 @@ export function formatCacheBadge(entry, { short = false } = {}) {
   return `из кэша, обновлено ${mins} мин назад`;
 }
 
-export function isFeedbacksRateLimited() {
-  if (rateLimitUntil > 0 && Date.now() >= rateLimitUntil) {
-    rateLimitUntil = 0;
+export function isFeedbacksReadRateLimited() {
+  if (readRateLimitUntil > 0 && Date.now() >= readRateLimitUntil) {
+    readRateLimitUntil = 0;
     return false;
   }
-  return rateLimitUntil > 0 && Date.now() < rateLimitUntil;
+  return isSlotRateLimited(readRateLimitUntil);
+}
+
+export function isFeedbacksWriteRateLimited() {
+  if (writeRateLimitUntil > 0 && Date.now() >= writeRateLimitUntil) {
+    writeRateLimitUntil = 0;
+    return false;
+  }
+  return isSlotRateLimited(writeRateLimitUntil);
+}
+
+/** Either read or write slot is cooling down (for UI countdown). */
+export function isFeedbacksRateLimited() {
+  return isFeedbacksReadRateLimited() || isFeedbacksWriteRateLimited();
+}
+
+export function getFeedbacksReadRateLimitSecondsLeft() {
+  return secondsLeft(readRateLimitUntil);
+}
+
+export function getFeedbacksWriteRateLimitSecondsLeft() {
+  return secondsLeft(writeRateLimitUntil);
 }
 
 export function getFeedbacksRateLimitSecondsLeft() {
-  const left = Math.ceil((rateLimitUntil - Date.now()) / 1000);
-  return left > 0 ? left : 0;
+  return Math.max(
+    getFeedbacksReadRateLimitSecondsLeft(),
+    getFeedbacksWriteRateLimitSecondsLeft()
+  );
 }
 
-export function setFeedbacksRateLimited(retryAfterSec = 5) {
+export function setFeedbacksReadRateLimited(retryAfterSec = 5) {
   const sec = Math.min(60, Math.max(1, Number(retryAfterSec) || 5));
-  rateLimitUntil = Date.now() + sec * 1000;
+  readRateLimitUntil = Date.now() + sec * 1000;
 }
 
-export function clearFeedbacksRateLimit() {
-  rateLimitUntil = 0;
+export function setFeedbacksWriteRateLimited(retryAfterSec = 5) {
+  const sec = Math.min(60, Math.max(1, Number(retryAfterSec) || 5));
+  writeRateLimitUntil = Date.now() + sec * 1000;
+}
+
+/** @param {'read'|'write'} [kind='read'] */
+export function setFeedbacksRateLimited(retryAfterSec = 5, { kind = 'read' } = {}) {
+  if (kind === 'write') setFeedbacksWriteRateLimited(retryAfterSec);
+  else setFeedbacksReadRateLimited(retryAfterSec);
+}
+
+/** @param {'read'|'write'} [kind] — omit to clear both slots */
+export function clearFeedbacksRateLimit(kind) {
+  clearRateLimitSlot(kind);
 }
 
 export function getCachedScopeCheck() {

@@ -22,6 +22,7 @@ import {
   getFeedbacksRateLimitSecondsLeft,
   getStaleCachedFeedbacksList,
   isFeedbacksRateLimited,
+  isFeedbacksReadRateLimited,
   setCachedFeedbacksList,
   setCachedUnansweredCount,
   setFeedbacksRateLimited,
@@ -563,11 +564,11 @@ export default function FeedbacksPanel({ token }) {
       }
 
       const showRateLimit = (sec, { queued = false } = {}) => {
-        setFeedbacksRateLimited(sec);
+        setFeedbacksRateLimited(sec, { kind: 'read' });
         setRateLimitCountdown(sec);
         restoreCachedList({ stale: true });
         if (queued) {
-          setStatus(`Обновление через ${sec} сек…`);
+          setStatus(`В очереди · обновление через ${sec} сек…`);
           setError('');
         } else {
           setError(`Подождите ${sec} сек — повтор автоматически…`);
@@ -583,7 +584,7 @@ export default function FeedbacksPanel({ token }) {
             showRateLimit(sec, { queued: true });
             return;
           }
-          clearFeedbacksRateLimit();
+          clearFeedbacksRateLimit('read');
         }
         if (loadInFlightRef.current) {
           cancelForegroundLoad();
@@ -627,12 +628,12 @@ export default function FeedbacksPanel({ token }) {
             body: JSON.stringify({ action: 'list', take: PAGE_SIZE, skip }),
             signal: abortRef.current?.signal,
           },
-          { timeoutMs: LOADING_WATCHDOG_MS }
+          { timeoutMs: LOADING_WATCHDOG_MS, kind: 'read' }
         );
         if (!response.ok) {
           throw new Error(formatApiError(payload, response.status));
         }
-        clearFeedbacksRateLimit();
+        clearFeedbacksRateLimit('read');
         loadAttemptRef.current = 0;
         setRateLimitCountdown(0);
         hasDataRef.current = true;
@@ -698,7 +699,7 @@ export default function FeedbacksPanel({ token }) {
       if (sec > 0) {
         pendingRefreshRef.current = true;
         setRateLimitCountdown(sec);
-        setStatus(`Обновление через ${sec} сек…`);
+        setStatus(`В очереди · обновление через ${sec} сек…`);
         setError('');
         restoreCachedList({ stale: true });
         return;
@@ -763,7 +764,7 @@ export default function FeedbacksPanel({ token }) {
       const left = getFeedbacksRateLimitSecondsLeft();
       setRateLimitCountdown(left);
       if (left <= 0) {
-        clearFeedbacksRateLimit();
+        clearFeedbacksRateLimit('read');
         setError((prev) => (prev.startsWith('Подождите') ? '' : prev));
         if (pendingRefreshRef.current) {
           pendingRefreshRef.current = false;
@@ -880,18 +881,22 @@ export default function FeedbacksPanel({ token }) {
       setSendingId(feedback.id);
       setError('');
       try {
-        const { response, payload } = await fetchFeedbacksApi('/api/feedbacks/feedbacks', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
+        const { response, payload } = await fetchFeedbacksApi(
+          '/api/feedbacks/feedbacks',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              action: 'answer',
+              feedbackId: feedback.id,
+              text: draft,
+            }),
           },
-          body: JSON.stringify({
-            action: 'answer',
-            feedbackId: feedback.id,
-            text: draft,
-          }),
-        });
+          { kind: 'write', maxRetries: 5 }
+        );
         if (!response.ok) {
           throw new Error(payload.error || 'Не удалось отправить ответ');
         }
@@ -907,9 +912,10 @@ export default function FeedbacksPanel({ token }) {
       } catch (err) {
         if (isRateLimitError(err)) {
           const sec = Number(err.retryAfterSec) || getFeedbacksRateLimitSecondsLeft() || 5;
+          setFeedbacksRateLimited(sec, { kind: err.kind === 'write' ? 'write' : 'read' });
           setRateLimitCountdown(sec);
           restoreCachedList({ stale: true });
-          setError(`Подождите ${sec} сек — отправка повторится при следующей попытке`);
+          setError(`В очереди · повтор через ${sec} сек`);
         } else {
           setError(err.message || 'Ошибка отправки');
         }
@@ -940,7 +946,28 @@ export default function FeedbacksPanel({ token }) {
       token,
       getFeedbacks: () => dataRef.current?.feedbacks || [],
       onState: (state) => setAutoReplyState((prev) => ({ ...prev, ...state })),
-      onAfterSend: () => loadFeedbacks({ force: true }),
+      onAfterSend: (feedbackId) => {
+        if (autoReplyRef.current?.isPosting?.()) return;
+        if (dataRef.current?.feedbacks?.length) {
+          const nextFeedbacks = dataRef.current.feedbacks.filter((fb) => fb.id !== feedbackId);
+          const count = Math.max(0, (dataRef.current.countUnanswered ?? nextFeedbacks.length) - 1);
+          const nextData = {
+            ...dataRef.current,
+            feedbacks: nextFeedbacks,
+            countUnanswered: count,
+          };
+          dataRef.current = nextData;
+          setData(nextData);
+          setCachedFeedbacksList(token, {
+            feedbacks: nextFeedbacks,
+            countUnanswered: count,
+            hasMore: dataRef.current.hasMore,
+          });
+          setStatus(`Без ответа: ${count}`);
+        }
+        if (isFeedbacksReadRateLimited() || loadInFlightRef.current) return;
+        loadFeedbacks({ force: true });
+      },
     });
     autoReplyRef.current = scheduler;
     scheduler.start();
@@ -1101,7 +1128,7 @@ export default function FeedbacksPanel({ token }) {
                 disabled={loading || loadingMore}
                 onClick={() => {
                   loadAttemptRef.current = 0;
-                  clearFeedbacksRateLimit();
+                  clearFeedbacksRateLimit('read');
                   loadFeedbacks({ force: true });
                 }}
               >
@@ -1154,11 +1181,15 @@ export default function FeedbacksPanel({ token }) {
           <p>
             <span className="font-medium text-slate-700">Следующий: </span>
             {autoReplyEnabled
-              ? autoReplyState.running
-                ? 'сейчас…'
-                : formatMinutes(autoReplyState.nextInMs) > 0
-                  ? `через ${formatMinutes(autoReplyState.nextInMs)} мин`
-                  : 'скоро'
+              ? autoReplyState.posting
+                ? 'отправка…'
+                : autoReplyState.running
+                  ? 'сейчас…'
+                  : autoReplyState.status?.startsWith('в очереди')
+                    ? autoReplyState.status
+                    : formatMinutes(autoReplyState.nextInMs) > 0
+                      ? `через ${formatMinutes(autoReplyState.nextInMs)} мин`
+                      : 'скоро'
               : '—'}
           </p>
         </div>

@@ -84,7 +84,9 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Укажите текст ответа' });
       }
 
-      const result = await postFeedbackAnswer(token, feedbackId, text);
+      const result = await postFeedbackAnswer(token, feedbackId, text, {
+        skipVerify: Boolean(req.body?.skipVerify),
+      });
       return res.status(200).json({
         action: 'answer',
         feedbackId,

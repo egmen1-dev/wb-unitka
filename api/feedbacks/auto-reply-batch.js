@@ -103,7 +103,7 @@ export default async function handler(req, res) {
     }
 
     const text = String(draftResult.data.draft || '').trim();
-    const answer = await postFeedbackAnswer(token, feedback.id, text);
+    const answer = await postFeedbackAnswer(token, feedback.id, text, { skipVerify: true });
 
     return res.status(200).json({
       ok: true,
