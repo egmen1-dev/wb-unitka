@@ -186,7 +186,7 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
 function formatRateLimitError(payload, status) {
   if (status === 429 || payload?.code === 'RATE_LIMIT') {
     const sec = Number(payload?.retryAfterSec) || 5;
-    return `Слишком много запросов к WB, подождите ${sec} сек`;
+    return `429 подождите ${sec} сек`;
   }
   return null;
 }
@@ -307,6 +307,7 @@ function formatDraftStatus(payload, { regenerate = false } = {}) {
 }
 
 function formatApiError(payload, status, fallback = 'Не удалось загрузить отзывы') {
+  if (status === 401) return '401 токен отозван';
   const rateMsg = formatRateLimitError(payload, status);
   if (rateMsg) return rateMsg;
   const parts = [payload?.error, payload?.hint, payload?.detail].filter(Boolean);
@@ -375,7 +376,7 @@ export default function FeedbacksPanel({ token }) {
       return;
     }
     setRateLimitCountdown(sec);
-    setError(`Слишком много запросов к WB, повтор через ${sec} сек…`);
+    setError(`429 подождите ${sec} сек…`);
     await new Promise((resolve) => {
       autoRetryTimerRef.current = setTimeout(resolve, sec * 1000);
     });
@@ -383,14 +384,37 @@ export default function FeedbacksPanel({ token }) {
     setRateLimitCountdown(0);
   }, []);
 
+  const cancelForegroundLoad = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    loadInFlightRef.current = false;
+    clearLoadingWatchdog();
+    setLoading(false);
+    setLoadingMore(false);
+  }, [clearLoadingWatchdog]);
+
   const loadFeedbacks = useCallback(
     async ({ force = false, isRetry = false, append = false, skip = 0, background = false } = {}) => {
-      if (!token) {
-        setError('Вставьте токен WB с категорией «Вопросы и отзывы».');
+      if (!token?.trim()) {
+        setError('Нет токена');
         return;
       }
 
-      if (background) {
+      if (force && !append && !background) {
+        loadAttemptRef.current = 0;
+        if (isFeedbacksRateLimited()) {
+          const sec = getFeedbacksRateLimitSecondsLeft();
+          if (sec > 0 && !isRetry) {
+            setRateLimitCountdown(sec);
+            setError(`429 подождите ${sec} сек`);
+            return;
+          }
+          clearFeedbacksRateLimit();
+        }
+        if (loadInFlightRef.current) {
+          cancelForegroundLoad();
+        }
+      } else if (background) {
         if (backgroundInFlightRef.current || loadInFlightRef.current) return;
       } else if (loadInFlightRef.current && !append) {
         return;
@@ -411,7 +435,7 @@ export default function FeedbacksPanel({ token }) {
         }
         const sec = getFeedbacksRateLimitSecondsLeft();
         setRateLimitCountdown(sec);
-        setError(`Слишком много запросов к WB, подождите ${sec} сек`);
+        setError(`429 подождите ${sec} сек`);
         setLoading(false);
         loadInFlightRef.current = false;
         return;
@@ -466,7 +490,7 @@ export default function FeedbacksPanel({ token }) {
             if (!isRetry && loadAttemptRef.current < 1) {
               loadAttemptRef.current += 1;
               if (!background) {
-                setError(`Слишком много запросов к WB, повтор через ${sec} сек…`);
+                setError(`429 подождите ${sec} сек…`);
               }
               if (append) setLoadingMore(false);
               else if (background) {
@@ -528,7 +552,7 @@ export default function FeedbacksPanel({ token }) {
         }
       }
     },
-    [token, waitForRateLimit, startLoadingWatchdog, clearLoadingWatchdog]
+    [token, waitForRateLimit, startLoadingWatchdog, clearLoadingWatchdog, cancelForegroundLoad]
   );
 
   const loadMoreFeedbacks = useCallback(() => {
@@ -537,16 +561,16 @@ export default function FeedbacksPanel({ token }) {
     loadFeedbacks({ force: true, append: true, skip: current });
   }, [data?.feedbacks?.length, loadFeedbacks, loading, loadingMore]);
 
-  const debouncedRefresh = useCallback(() => {
-    if (refreshLockRef.current || loading) return;
+  const handleRefresh = useCallback(() => {
     if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
     refreshDebounceRef.current = setTimeout(() => {
+      if (refreshLockRef.current) return;
       refreshLockRef.current = true;
       loadFeedbacks({ force: true }).finally(() => {
         refreshLockRef.current = false;
       });
-    }, 400);
-  }, [loadFeedbacks, loading]);
+    }, 200);
+  }, [loadFeedbacks]);
 
   useEffect(() => {
     let cancelled = false;
@@ -706,7 +730,7 @@ export default function FeedbacksPanel({ token }) {
         return;
       }
       if (!token) {
-        setError('Вставьте токен WB.');
+        setError('Нет токена');
         return;
       }
 
@@ -731,7 +755,7 @@ export default function FeedbacksPanel({ token }) {
             const sec = Number(payload?.retryAfterSec) || 5;
             setFeedbacksRateLimited(sec);
             setRateLimitCountdown(sec);
-            throw new Error(`Слишком много запросов к WB, подождите ${sec} сек`);
+            throw new Error(`429 подождите ${sec} сек`);
           }
           throw new Error(payload.error || 'Не удалось отправить ответ');
         }
@@ -792,8 +816,7 @@ export default function FeedbacksPanel({ token }) {
           <button
             type="button"
             className="btn-secondary text-sm"
-            disabled={loading}
-            onClick={debouncedRefresh}
+            onClick={handleRefresh}
           >
             {loading ? 'Загрузка…' : refreshing ? 'Обновление…' : 'Обновить'}
           </button>
