@@ -437,13 +437,30 @@ function formatAutoReplyTime(iso) {
   }
 }
 
+const AUTO_REPLY_PHASE_LABELS = {
+  idle: 'ожидание',
+  processing: 'обработка',
+  generating: 'генерация черновика',
+  sending: 'отправка в WB',
+  sent: 'отправлен',
+  error: 'ошибка',
+};
+
+function formatAutoReplyPhase(phase, status) {
+  if (status?.startsWith('в очереди')) return status;
+  if (status && !['запущен', 'остановлен', 'обработка'].includes(status)) return status;
+  return AUTO_REPLY_PHASE_LABELS[phase] || status || 'ожидание';
+}
+
 function AutoReplyLogEntry({ entry }) {
   const statusClass =
     entry.status === 'отправлен'
       ? 'text-emerald-700'
       : entry.status === 'пропущен'
         ? 'text-amber-700'
-        : 'text-rose-700';
+        : entry.status === 'в очереди'
+          ? 'text-brand-700'
+          : 'text-rose-700';
   return (
     <li className="border-b border-slate-100 py-2 last:border-0">
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -501,9 +518,12 @@ export default function FeedbacksPanel({ token }) {
     nextInMs: getMsUntilNextSlot(),
     log: getAutoReplyLog(),
     status: '',
+    phase: 'idle',
     running: false,
+    lastResult: null,
   });
   const autoReplyRef = useRef(null);
+  const loadFeedbacksRef = useRef(null);
   const loadAttemptRef = useRef(0);
   const hasDataRef = useRef(false);
   const dataRef = useRef(null);
@@ -677,6 +697,30 @@ export default function FeedbacksPanel({ token }) {
       }
     },
     [token, startLoadingWatchdog, clearLoadingWatchdog, cancelForegroundLoad, restoreCachedList]
+  );
+
+  loadFeedbacksRef.current = loadFeedbacks;
+
+  const applyFeedbacksList = useCallback(
+    ({ feedbacks, countUnanswered, hasMore }) => {
+      const count = countUnanswered ?? feedbacks?.length ?? 0;
+      const nextData = {
+        feedbacks: feedbacks || [],
+        countUnanswered: count,
+        hasMore: Boolean(hasMore),
+      };
+      dataRef.current = nextData;
+      hasDataRef.current = Boolean(nextData.feedbacks?.length);
+      setData(nextData);
+      setCachedFeedbacksList(token, {
+        feedbacks: nextData.feedbacks,
+        countUnanswered: count,
+        hasMore: nextData.hasMore,
+      });
+      setCachedUnansweredCount(count);
+      setStatus(`Без ответа: ${count}`);
+    },
+    [token]
   );
 
   const loadMoreFeedbacks = useCallback(() => {
@@ -937,6 +981,7 @@ export default function FeedbacksPanel({ token }) {
         nextInMs: getMsUntilNextSlot(),
         log: getAutoReplyLog(),
         running: false,
+        phase: 'idle',
         status: autoReplyEnabled ? '' : 'остановлен',
       }));
       return undefined;
@@ -946,6 +991,7 @@ export default function FeedbacksPanel({ token }) {
       token,
       getFeedbacks: () => dataRef.current?.feedbacks || [],
       onState: (state) => setAutoReplyState((prev) => ({ ...prev, ...state })),
+      onFeedbacksLoaded: (list) => applyFeedbacksList(list),
       onAfterSend: (feedbackId) => {
         if (autoReplyRef.current?.isPosting?.()) return;
         if (dataRef.current?.feedbacks?.length) {
@@ -966,14 +1012,14 @@ export default function FeedbacksPanel({ token }) {
           setStatus(`Без ответа: ${count}`);
         }
         if (isFeedbacksReadRateLimited() || loadInFlightRef.current) return;
-        loadFeedbacks({ force: true });
+        loadFeedbacksRef.current?.({ force: true });
       },
     });
     autoReplyRef.current = scheduler;
     scheduler.start();
 
     return () => scheduler.destroy();
-  }, [token, autoReplyEnabled, loadFeedbacks]);
+  }, [token, autoReplyEnabled, applyFeedbacksList]);
 
   useEffect(() => {
     if (!autoReplyEnabled) return undefined;
@@ -993,6 +1039,10 @@ export default function FeedbacksPanel({ token }) {
     saveAutoReplyEnabled(next);
     if (!next) {
       autoReplyRef.current?.stop();
+      return;
+    }
+    if (!dataRef.current?.feedbacks?.length && !loadInFlightRef.current) {
+      loadFeedbacksRef.current?.({ force: true });
     }
   }, [autoReplyEnabled]);
 
@@ -1194,8 +1244,37 @@ export default function FeedbacksPanel({ token }) {
           </p>
         </div>
 
-        {autoReplyEnabled && autoReplyState.status ? (
-          <p className="mt-2 text-xs text-brand-700">{autoReplyState.status}</p>
+        {autoReplyEnabled ? (
+          <div className="mt-2 space-y-1">
+            <p
+              className={`text-xs font-medium ${
+                autoReplyState.phase === 'error'
+                  ? 'text-rose-700'
+                  : autoReplyState.phase === 'sent'
+                    ? 'text-emerald-700'
+                    : 'text-brand-700'
+              }`}
+            >
+              {formatAutoReplyPhase(autoReplyState.phase, autoReplyState.status)}
+            </p>
+            {autoReplyState.lastResult ? (
+              <p className="text-xs text-slate-500">
+                Последний: {formatAutoReplyTime(autoReplyState.lastResult.at)} ·{' '}
+                {autoReplyState.lastResult.ok ? (
+                  <span className="text-emerald-700">
+                    ✓ {autoReplyState.lastResult.productName || autoReplyState.lastResult.feedbackId}
+                  </span>
+                ) : (
+                  <span className="text-rose-700">
+                    ✗ {autoReplyState.lastResult.reason || 'ошибка'}
+                    {autoReplyState.lastResult.feedbackId
+                      ? ` · ${autoReplyState.lastResult.feedbackId}`
+                      : ''}
+                  </span>
+                )}
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
         {!autoReplyEnabled ? (

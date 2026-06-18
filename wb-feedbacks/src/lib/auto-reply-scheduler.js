@@ -10,10 +10,23 @@ export { AUTO_REPLY_INTERVAL_MS, AUTO_REPLY_MAX_PER_HOUR, isDraftSafeForAutoSend
 const HOUR_MS = 3_600_000;
 const LOG_MAX = 50;
 const POST_REFRESH_DELAY_MS = 15_000;
+const ERROR_RETRY_MS = 30_000;
+const MIN_SCHEDULE_MS = 3_000;
 
 const STORAGE_ENABLED = 'wb-feedbacks:auto-reply:enabled';
 const STORAGE_LOG = 'wb-feedbacks:auto-reply:log';
 const STORAGE_TIMESTAMPS = 'wb-feedbacks:auto-reply:timestamps';
+
+const DEBUG = import.meta.env.DEV;
+
+function log(...args) {
+  if (DEBUG) console.log('[auto-reply]', ...args);
+}
+
+function logWarn(...args) {
+  if (DEBUG) console.warn('[auto-reply]', ...args);
+  else console.warn('[auto-reply]', ...args);
+}
 
 function readJson(key, fallback) {
   try {
@@ -71,9 +84,9 @@ export function getAutoReplyLog() {
 }
 
 function appendLog(entry) {
-  const log = [entry, ...getAutoReplyLog()].slice(0, LOG_MAX);
-  writeJson(STORAGE_LOG, log);
-  return log;
+  const logEntries = [entry, ...getAutoReplyLog()].slice(0, LOG_MAX);
+  writeJson(STORAGE_LOG, logEntries);
+  return logEntries;
 }
 
 function recordSentTimestamp() {
@@ -98,6 +111,10 @@ export function formatMinutes(ms) {
   return min <= 0 ? 0 : min;
 }
 
+function pickNextFeedback(feedbacks, skippedIds) {
+  return (feedbacks || []).find((fb) => fb?.id && !fb.isAnswered && !skippedIds.has(fb.id));
+}
+
 async function requestDraft(token, feedback, { regenerate = false } = {}) {
   const variationSeed = Date.now() + Math.floor(Math.random() * 10_000);
   const response = await fetchWithTimeout('/api/feedbacks/feedback-draft', {
@@ -117,6 +134,7 @@ async function requestDraft(token, feedback, { regenerate = false } = {}) {
   if (!response.ok) {
     const err = new Error(payload?.error || 'Не удалось сгенерировать ответ');
     err.payload = payload;
+    err.status = response.status;
     throw err;
   }
   return payload;
@@ -163,7 +181,11 @@ async function fetchUnanswered(token, take = 20) {
     { kind: 'read' }
   );
   if (!response.ok) throw new Error(payload?.error || 'Не удалось загрузить отзывы');
-  return payload.feedbacks || [];
+  return {
+    feedbacks: payload.feedbacks || [],
+    countUnanswered: payload.countUnanswered ?? payload.feedbacks?.length ?? 0,
+    hasMore: payload.hasMore ?? false,
+  };
 }
 
 /**
@@ -172,9 +194,16 @@ async function fetchUnanswered(token, take = 20) {
  *   getFeedbacks?: () => Array,
  *   onState?: (state: object) => void,
  *   onAfterSend?: (feedbackId: string) => void | Promise<void>,
+ *   onFeedbacksLoaded?: (data: { feedbacks: Array, countUnanswered: number, hasMore: boolean }) => void,
  * }} options
  */
-export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfterSend }) {
+export function createAutoReplyScheduler({
+  token,
+  getFeedbacks,
+  onState,
+  onAfterSend,
+  onFeedbacksLoaded,
+}) {
   let enabled = false;
   let running = false;
   let posting = false;
@@ -190,6 +219,7 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
       sentThisHour: getSentThisHour(),
       nextInMs: getMsUntilNextSlot(),
       log: getAutoReplyLog(),
+      phase: 'idle',
       ...patch,
     });
   }
@@ -204,95 +234,181 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
   function scheduleNext(delayMs, status = 'ожидание') {
     clearTimer();
     if (!enabled || stopped) return;
-    const wait = Math.max(5_000, delayMs ?? getMsUntilNextSlot());
+    const wait =
+      delayMs != null
+        ? Math.max(MIN_SCHEDULE_MS, delayMs)
+        : Math.max(MIN_SCHEDULE_MS, getMsUntilNextSlot());
     timer = setTimeout(() => {
-      runCycle().catch(() => {});
+      runCycle().catch((err) => logWarn('cycle error', err));
     }, wait);
-    emit({ nextInMs: wait, status });
+    emit({ nextInMs: wait, status, phase: 'idle' });
+  }
+
+  async function loadFeedbacksList() {
+    if (isFeedbacksReadRateLimited()) {
+      const rateWait = getFeedbacksReadRateLimitSecondsLeft() * 1000;
+      emit({
+        phase: 'idle',
+        status: `в очереди · лимит чтения WB ${Math.ceil(rateWait / 1000)} сек`,
+      });
+      scheduleNext(rateWait, `в очереди · ${Math.ceil(rateWait / 1000)} сек`);
+      return null;
+    }
+
+    log('fetching unanswered reviews');
+    const list = await fetchUnanswered(token);
+    onFeedbacksLoaded?.(list);
+    return list.feedbacks || [];
   }
 
   async function generateSafeDraft(feedback) {
-    let payload = await requestDraft(token, feedback, { regenerate: false });
-    let check = isDraftSafeForAutoSend(payload);
-    if (check.ok) return { payload, retried: false };
+    try {
+      let payload = await requestDraft(token, feedback, { regenerate: false });
+      let check = isDraftSafeForAutoSend(payload);
+      if (check.ok) return { payload, retried: false };
 
-    payload = await requestDraft(token, feedback, { regenerate: true });
-    check = isDraftSafeForAutoSend(payload);
-    if (check.ok) return { payload, retried: true };
+      log('draft unsafe, regenerating', check.reason);
+      payload = await requestDraft(token, feedback, { regenerate: true });
+      check = isDraftSafeForAutoSend(payload);
+      if (check.ok) return { payload, retried: true };
 
-    return { payload, retried: true, skipReason: check.reason };
+      return { payload, retried: true, skipReason: check.reason };
+    } catch (err) {
+      return { error: err.message || 'Ошибка генерации', payload: err.payload, status: err.status };
+    }
   }
 
-  async function runCycle() {
-    if (!enabled || stopped || running) {
+  async function runCycle({ immediate = false } = {}) {
+    if (!enabled || stopped) return;
+
+    if (running) {
       scheduleNext();
       return;
     }
 
-    const waitMs = getMsUntilNextSlot();
-    if (waitMs > 0) {
+    if (!immediate) {
+      const waitMs = getMsUntilNextSlot();
+      if (waitMs > 0) {
+        emit({ phase: 'idle', status: `ожидание · ${formatMinutes(waitMs)} мин` });
+        scheduleNext(waitMs);
+        return;
+      }
+    }
+
+    if (getSentThisHour() >= AUTO_REPLY_MAX_PER_HOUR) {
+      const waitMs = getMsUntilNextSlot();
+      emit({ phase: 'idle', status: `лимит ${AUTO_REPLY_MAX_PER_HOUR}/час` });
       scheduleNext(waitMs);
       return;
     }
 
-    if (getSentThisHour() >= AUTO_REPLY_MAX_PER_HOUR) {
-      scheduleNext(getMsUntilNextSlot());
-      return;
-    }
-
     running = true;
-    emit({ status: 'обработка', running: true });
+    let currentFeedback = null;
+    emit({ status: 'обработка', phase: 'processing', running: true });
 
     try {
-      let feedbacks = getFeedbacks?.() || [];
+      let feedbacks = (getFeedbacks?.() || []).filter((fb) => fb?.id && !fb.isAnswered);
+
       if (!feedbacks.length) {
-        if (isFeedbacksReadRateLimited()) {
-          const rateWait = getFeedbacksReadRateLimitSecondsLeft() * 1000;
-          emit({
-            status: `в очереди · лимит чтения WB ${Math.ceil(rateWait / 1000)} сек`,
-          });
-          scheduleNext(rateWait, `в очереди · ${Math.ceil(rateWait / 1000)} сек`);
-          return;
-        }
-        feedbacks = await fetchUnanswered(token);
+        const fetched = await loadFeedbacksList();
+        if (fetched === null) return;
+        feedbacks = fetched;
       }
 
-      const feedback = feedbacks.find((fb) => fb?.id && !skippedIds.has(fb.id));
+      let feedback = pickNextFeedback(feedbacks, skippedIds);
+
+      if (!feedback && skippedIds.size > 0) {
+        log('all cached reviews skipped — refetching');
+        skippedIds.clear();
+        const fetched = await loadFeedbacksList();
+        if (fetched === null) return;
+        feedbacks = fetched;
+        feedback = pickNextFeedback(feedbacks, skippedIds);
+      }
+
       if (!feedback) {
-        emit({ status: 'нет отзывов' });
+        emit({ status: 'нет отзывов', phase: 'idle' });
         scheduleNext(AUTO_REPLY_INTERVAL_MS);
         return;
       }
 
-      emit({ status: `генерация · ${feedback.productName || feedback.id}` });
+      currentFeedback = feedback;
+      emit({
+        status: `генерация · ${feedback.productName || feedback.id}`,
+        phase: 'generating',
+        currentFeedbackId: feedback.id,
+      });
 
-      const { payload, retried, skipReason } = await generateSafeDraft(feedback);
+      const draftResult = await generateSafeDraft(feedback);
+
+      if (draftResult.error) {
+        const isRate =
+          draftResult.status === 429 || draftResult.payload?.code === 'RATE_LIMIT';
+        appendLog({
+          at: new Date().toISOString(),
+          feedbackId: feedback.id,
+          productName: feedback.productName || '',
+          rating: feedback.rating,
+          status: isRate ? 'в очереди' : 'ошибка',
+          reason: `Черновик: ${draftResult.error}`,
+        });
+        emit({
+          status: isRate ? `в очереди · ${draftResult.error}` : `ошибка · ${draftResult.error}`,
+          phase: isRate ? 'idle' : 'error',
+          lastResult: { at: new Date().toISOString(), feedbackId: feedback.id, ok: false, reason: draftResult.error },
+        });
+        const retryAfterSec = Number(draftResult.payload?.retryAfterSec) || 0;
+        scheduleNext(
+          isRate && retryAfterSec > 0 ? retryAfterSec * 1000 : ERROR_RETRY_MS,
+          isRate ? `в очереди · ${retryAfterSec || Math.ceil(ERROR_RETRY_MS / 1000)} сек` : undefined
+        );
+        return;
+      }
+
+      const { payload, retried, skipReason } = draftResult;
       const check = isDraftSafeForAutoSend(payload);
 
       if (!check.ok) {
         skippedIds.add(feedback.id);
+        const reason = skipReason || check.reason;
         appendLog({
           at: new Date().toISOString(),
           feedbackId: feedback.id,
           productName: feedback.productName || '',
           rating: feedback.rating,
           status: 'пропущен',
-          reason: skipReason || check.reason,
+          reason,
           retried,
         });
-        emit({ status: `пропуск · ${skipReason || check.reason}` });
-        scheduleNext(AUTO_REPLY_INTERVAL_MS);
+        emit({
+          status: `пропуск · ${reason}`,
+          phase: 'idle',
+          lastResult: { at: new Date().toISOString(), feedbackId: feedback.id, ok: false, reason },
+        });
+        scheduleNext(MIN_SCHEDULE_MS);
         return;
       }
 
       posting = true;
-      emit({ status: `отправка · ${feedback.productName || feedback.id}`, posting: true });
+      emit({
+        status: `отправка · ${feedback.productName || feedback.id}`,
+        phase: 'sending',
+        posting: true,
+        currentFeedbackId: feedback.id,
+      });
 
+      log('posting answer', feedback.id);
       await postAnswer(token, feedback.id, payload.draft.trim());
 
       const sentThisHour = recordSentTimestamp();
-      appendLog({
+      const lastResult = {
         at: new Date().toISOString(),
+        feedbackId: feedback.id,
+        ok: true,
+        productName: feedback.productName || '',
+      };
+      appendLog({
+        at: lastResult.at,
         feedbackId: feedback.id,
         productName: feedback.productName || '',
         rating: feedback.rating,
@@ -303,7 +419,13 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
       });
 
       posting = false;
-      emit({ status: 'отправлен', sentThisHour, posting: false });
+      emit({
+        status: 'отправлен',
+        phase: 'sent',
+        sentThisHour,
+        posting: false,
+        lastResult,
+      });
       setTimeout(() => {
         onAfterSend?.(feedback.id);
       }, POST_REFRESH_DELAY_MS);
@@ -312,24 +434,32 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
       posting = false;
       const reason = err.message || 'Ошибка';
       const isRate = isRateLimitError(err);
+      const fb = currentFeedback;
       appendLog({
         at: new Date().toISOString(),
-        feedbackId: null,
-        productName: '',
-        rating: null,
+        feedbackId: fb?.id || null,
+        productName: fb?.productName || '',
+        rating: fb?.rating ?? null,
         status: isRate ? 'в очереди' : 'ошибка',
         reason,
       });
       emit({
         status: isRate ? `в очереди · ${reason}` : `ошибка · ${reason}`,
+        phase: isRate ? 'idle' : 'error',
         posting: false,
+        lastResult: {
+          at: new Date().toISOString(),
+          feedbackId: fb?.id || null,
+          ok: false,
+          reason,
+        },
       });
 
       const retryAfterSec =
         Number(err.payload?.retryAfterSec) ||
         (isRateLimitError(err) ? Number(err.retryAfterSec) : 0) ||
         0;
-      const backoff = retryAfterSec > 0 ? retryAfterSec * 1000 : AUTO_REPLY_INTERVAL_MS;
+      const backoff = retryAfterSec > 0 ? retryAfterSec * 1000 : isRate ? ERROR_RETRY_MS : ERROR_RETRY_MS;
       scheduleNext(backoff, isRate ? `в очереди · ${Math.ceil(backoff / 1000)} сек` : undefined);
     } finally {
       running = false;
@@ -343,15 +473,17 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
       enabled = true;
       saveAutoReplyEnabled(true);
       skippedIds.clear();
-      emit({ status: 'запущен' });
-      runCycle().catch(() => {});
+      log('started');
+      emit({ status: 'запущен', phase: 'idle' });
+      runCycle({ immediate: true }).catch((err) => logWarn('start cycle error', err));
     },
     stop() {
       enabled = false;
       stopped = true;
       saveAutoReplyEnabled(false);
       clearTimer();
-      emit({ status: 'остановлен', posting: false });
+      log('stopped');
+      emit({ status: 'остановлен', phase: 'idle', posting: false });
     },
     refresh() {
       emit();
