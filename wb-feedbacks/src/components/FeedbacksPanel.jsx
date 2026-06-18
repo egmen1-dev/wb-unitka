@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { APP_BUILD } from '../lib/app-build';
 import { fmtMoney } from '../lib/format';
 import { DEFAULT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from '../lib/http';
 import {
@@ -273,6 +274,19 @@ async function fetchAiConfigStatus() {
     apiCheckStatus: 'error',
     endpoint: '',
   };
+}
+
+function formatPromptLabel(promptVersion, commitSha) {
+  if (promptVersion === 'manager-v2') {
+    const sha = commitSha || APP_BUILD;
+    return `Промпт: менеджер v2 · ${sha}`;
+  }
+  if (promptVersion) return `Промпт: ${promptVersion}`;
+  return null;
+}
+
+function isTemplateDraft(draft) {
+  return draft?.provider === 'template' || draft?.source?.startsWith?.('template');
 }
 
 function formatProviderLabel(provider, source) {
@@ -618,6 +632,8 @@ export default function FeedbacksPanel({ token }) {
             text: payload.draft || '',
             source: payload.source,
             provider: payload.provider || null,
+            promptVersion: payload.promptVersion || null,
+            commitSha: payload.commitSha || null,
             alternative: payload.alternative,
             premiumUpsell: payload.premiumUpsell,
             validation: payload.validation,
@@ -935,6 +951,22 @@ export default function FeedbacksPanel({ token }) {
                       <span className="font-medium text-slate-700">SKU в ответе: </span>
                       арт. {upsell.article} — {upsell.title}
                     </div>
+                  ) : null}
+
+                  {isTemplateDraft(draft) ? (
+                    <div
+                      className="mt-2 rounded-lg border-2 border-red-500 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800"
+                      role="alert"
+                    >
+                      ⚠️ НЕ МЕНЕДЖЕР — ОШИБКА AI. Ответ сгенерирован по старому шаблону, не отправляйте его.
+                      Проверьте ключи YandexGPT в Vercel и перегенерируйте.
+                    </div>
+                  ) : null}
+
+                  {formatPromptLabel(draft?.promptVersion, draft?.commitSha) ? (
+                    <p className="mt-2 font-mono text-[11px] text-slate-500">
+                      {formatPromptLabel(draft?.promptVersion, draft?.commitSha)}
+                    </p>
                   ) : null}
 
                   <textarea
