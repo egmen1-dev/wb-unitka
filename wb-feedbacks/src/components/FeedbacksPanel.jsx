@@ -191,6 +191,7 @@ function formatAiConfigLabel({ yandexConfigured, openaiConfigured, loading, apiC
 }
 
 function formatApiCheckDiagnostic({ apiCheckStatus, endpoint, error }) {
+  if (apiCheckStatus === 'pending') return 'API ai-config-check: отложена (не блокирует загрузку)';
   if (apiCheckStatus === 'loading') return 'API ai-config-check: проверка…';
   if (apiCheckStatus === 'ok') {
     return `API ai-config-check: OK (${endpoint || 'feedbacks-check'})`;
@@ -316,9 +317,9 @@ export default function FeedbacksPanel({ token }) {
     yandexConfigured: false,
     openaiConfigured: false,
     envPresent: null,
-    loading: true,
+    loading: false,
     error: '',
-    apiCheckStatus: 'loading',
+    apiCheckStatus: 'pending',
     endpoint: '',
   });
   const [cacheBadge, setCacheBadge] = useState('');
@@ -535,14 +536,18 @@ export default function FeedbacksPanel({ token }) {
 
   useEffect(() => {
     let cancelled = false;
-
-    (async () => {
-      const result = await fetchAiConfigStatus();
-      if (!cancelled) setAiConfig(result);
-    })();
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      setAiConfig((prev) => ({ ...prev, loading: true, apiCheckStatus: 'loading' }));
+      (async () => {
+        const result = await fetchAiConfigStatus();
+        if (!cancelled) setAiConfig(result);
+      })();
+    }, 5000);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, []);
 
@@ -551,6 +556,9 @@ export default function FeedbacksPanel({ token }) {
       setData(null);
       dataRef.current = null;
       setCacheBadge('');
+      setStatus('');
+      setError('');
+      setLoading(false);
       return undefined;
     }
 
@@ -571,43 +579,34 @@ export default function FeedbacksPanel({ token }) {
       setError('');
       setLoading(false);
       loadAttemptRef.current = 0;
-      loadFeedbacks({ force: true, background: true });
-      return () => {
-        bgAbortRef.current?.abort();
-        abortRef.current?.abort();
-        clearLoadingWatchdog();
-        if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
-      };
+      return undefined;
     }
 
+    hasDataRef.current = false;
+    dataRef.current = null;
+    setData(null);
     const cachedCount = getCachedUnansweredCount();
-    if (cachedCount != null) setStatus(`Без ответа: ${cachedCount}`);
+    if (cachedCount != null) {
+      setStatus(`Без ответа: ${cachedCount} · кэш, нажмите «Обновить»`);
+    } else {
+      setStatus('Нажмите «Обновить» для загрузки отзывов с WB');
+    }
     setCacheBadge('');
+    setError('');
+    setLoading(false);
     loadAttemptRef.current = 0;
-    loadFeedbacks();
-    return () => {
-      bgAbortRef.current?.abort();
-      abortRef.current?.abort();
-      clearLoadingWatchdog();
-      if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
-    };
-  }, [token, loadFeedbacks, clearLoadingWatchdog]);
+    return undefined;
+  }, [token]);
 
   useEffect(() => {
     if (rateLimitCountdown <= 0) return undefined;
     const timer = setInterval(() => {
       const left = getFeedbacksRateLimitSecondsLeft();
       setRateLimitCountdown(left);
-      if (left <= 0) {
-        clearFeedbacksRateLimit();
-        if (error && loadAttemptRef.current < 1 && token && !loadInFlightRef.current) {
-          loadAttemptRef.current += 1;
-          loadFeedbacks({ force: true, isRetry: true });
-        }
-      }
+      if (left <= 0) clearFeedbacksRateLimit();
     }, 1000);
     return () => clearInterval(timer);
-  }, [rateLimitCountdown, error, token, loadFeedbacks]);
+  }, [rateLimitCountdown]);
 
   useEffect(
     () => () => {
@@ -874,7 +873,9 @@ export default function FeedbacksPanel({ token }) {
 
       {!loading && feedbacks.length === 0 && !error ? (
         <section className="panel text-sm text-slate-600">
-          {data ? 'Нет неотвеченных отзывов — отлично!' : null}
+          {data
+            ? 'Нет неотвеченных отзывов — отлично!'
+            : 'Отзывы не загружены. Нажмите «Обновить» для запроса к WB.'}
         </section>
       ) : null}
 

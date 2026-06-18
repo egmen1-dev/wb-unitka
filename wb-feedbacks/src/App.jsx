@@ -57,17 +57,20 @@ export default function App() {
         <BootStatus error={bootError} />
         <TokenPanel token={token} onTokenChange={setToken} />
         <FeedbacksPanel token={token} />
-        <p className="text-center text-xs text-slate-400">
-          Отдельный сервис — не нагружает токен{' '}
-          <a
-            href="https://wb-unitka.vercel.app"
-            className="text-brand-700 underline"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Юнитки WB
-          </a>
-        </p>
+        <footer className="space-y-1 text-center text-xs text-slate-400">
+          <p>
+            Отдельный сервис — не нагружает токен{' '}
+            <a
+              href="https://wb-unitka.vercel.app"
+              className="text-brand-700 underline"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Юнитки WB
+            </a>
+          </p>
+          <p className="font-mono text-[10px] text-slate-300">v{APP_BUILD}</p>
+        </footer>
       </main>
     </div>
   );
