@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { collectBrandOptions } from '../lib/brand-filter';
+
+const MENU_WIDTH = 288;
 
 export default function BrandFilter({ rows, selected = [], onChange, className = '' }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [menuStyle, setMenuStyle] = useState({ left: 0, right: 'auto', maxWidth: 'min(18rem, calc(100vw - 1rem))' });
   const rootRef = useRef(null);
 
   const options = useMemo(() => collectBrandOptions(rows), [rows]);
@@ -13,6 +16,24 @@ export default function BrandFilter({ rows, selected = [], onChange, className =
     if (!q) return options;
     return options.filter((opt) => opt.name.toLowerCase().includes(q));
   }, [options, query]);
+
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current) return undefined;
+
+    const anchor = rootRef.current.getBoundingClientRect();
+    const gutter = 8;
+    const maxWidth = Math.min(MENU_WIDTH, window.innerWidth - gutter * 2);
+    const spaceRight = window.innerWidth - anchor.left - gutter;
+    const spaceLeft = anchor.right - gutter;
+    const alignRight = spaceRight < maxWidth && spaceLeft >= spaceRight;
+
+    setMenuStyle({
+      left: alignRight ? 'auto' : 0,
+      right: alignRight ? 0 : 'auto',
+      width: maxWidth,
+      maxWidth,
+    });
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -62,7 +83,10 @@ export default function BrandFilter({ rows, selected = [], onChange, className =
       </button>
 
       {open ? (
-        <div className="absolute right-0 z-30 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+        <div
+          className="absolute z-30 mt-1 rounded-lg border border-slate-200 bg-white p-2 shadow-lg"
+          style={menuStyle}
+        >
           <div className="mb-2 flex items-center gap-2">
             <input
               className="input py-1 text-xs"

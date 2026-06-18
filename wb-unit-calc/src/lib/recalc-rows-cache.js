@@ -78,7 +78,11 @@ function applyDraftEconomics(calc, calcInput, settings, productOverrides, vendor
 function purchasePriceFor(row, purchases) {
   const vendor = String(row.vendorCode || '');
   const override = purchases[vendor];
-  return override != null && override !== '' ? Number(override) : row.purchasePrice;
+  if (override != null && override !== '') {
+    const n = Number(override);
+    if (Number.isFinite(n)) return n;
+  }
+  return row.purchasePrice;
 }
 
 /** Пересчёт с кэшем по nmId — при синхронизации пересчитываются только изменившиеся строки. */

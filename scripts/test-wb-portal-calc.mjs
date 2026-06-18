@@ -125,6 +125,24 @@ console.log('\nBreakdown:', {
 const noPurchase = calculateUnitEconomicsRow({ ...ARTICLE, purchasePrice: 0 }, baseSettings);
 check('без закупки прибыль не считается', noPurchase.profitFbs == null);
 
+const fbsOnlyLogistics = calculateUnitEconomicsRow(
+  {
+    salePrice: 1000,
+    purchasePrice: 400,
+    actualLogisticsRubFbs: 410,
+    fboCategoryRate: 0.25,
+    fbsCategoryRate: 0.25,
+  },
+  { ...baseSettings, preferActualRates: true }
+);
+check(
+  'FBS маржа без FBO логистики (нет габаритов)',
+  fbsOnlyLogistics.logisticsFbo == null &&
+    fbsOnlyLogistics.logisticsFbs === 410 &&
+    fbsOnlyLogistics.marginFbs != null &&
+    fbsOnlyLogistics.profitFbs != null
+);
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);
