@@ -2,7 +2,7 @@ name: Deploy wb-feedbacks
 
 on:
   push:
-    branches: [main, feature/wb-unit-calc, wb-feedbacks]
+    branches: [wb-feedbacks]
   workflow_dispatch:
 
 concurrency:

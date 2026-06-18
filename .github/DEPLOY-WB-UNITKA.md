@@ -38,6 +38,12 @@ npm run deploy:unit
 
 Если используете вариант B, workflow из варианта A можно отключить или оставить как запасной.
 
+### Важно: корневой `vercel.json`
+
+На ветках `main` и `feature/wb-unit-calc` корневой `vercel.json` **должен** собирать `wb-unit-calc` (см. `vercel.unit.json`).
+
+Конфиг с `build:feedbacks` — только на ветке `wb-feedbacks`. Если wb-unitka внезапно показывает «Отзывы WB — AI-ответы» вместо калькулятора, значит на прод задеплоился feedbacks-конфиг: сделайте push в `feature/wb-unit-calc` или redeploy с `vercel.unit.json`.
+
 ---
 
 ## Переменные окружения Vercel (проект wb-unitka)
