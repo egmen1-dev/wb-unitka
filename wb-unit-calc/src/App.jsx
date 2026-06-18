@@ -118,6 +118,7 @@ function formatCloudSaveError(err) {
 const CLOUD_SAVE_DEBOUNCE_MS = 3500;
 const CLOUD_SAVE_RETRY_MS = 2000;
 const CLOUD_SAVE_MAX_ATTEMPTS = 3;
+const CLOUD_PULL_TIMEOUT_MS = 30_000;
 
 function readBootCache() {
   const urlTeam = getTeamFromUrl();
@@ -350,9 +351,12 @@ function SectionAccessDenied({ title, onBack }) {
 export default function App() {
   const [boot] = useState(() => readBootCache());
   const bootPayload = boot.cache?.payload;
-  const bootHadRows = useRef(Boolean(bootPayload?.cache?.rows?.length));
-  const suppressAutoSyncRef = useRef(
-    Boolean(bootPayload?.cache?.rows?.length || bootPayload?.cache?.syncedAt)
+  const bootHadCachedData = useRef(
+    Boolean(
+      bootPayload?.cache?.rows?.length ||
+        bootPayload?.cache?.syncedAt ||
+        boot.cache?.updatedAt
+    )
   );
 
   const [team, setTeam] = useState(boot.team);
@@ -423,8 +427,11 @@ export default function App() {
         : local?.products?.length || local?.tariffCache
           ? local
           : null;
-    if (liteOrLocal || rows?.length) {
+    if (rows?.length) {
       return buildEffectiveWbCache(liteOrLocal, rows, bootPayload?.cache?.syncedAt);
+    }
+    if (liteOrLocal?.products?.length || liteOrLocal?.tariffCache) {
+      return liteOrLocal;
     }
     return null;
   });
@@ -444,6 +451,8 @@ export default function App() {
   const skipCloudSave = useRef(true);
   const cloudBootstrappedRef = useRef(false);
   const cloudSaveGenRef = useRef(0);
+  const cloudPullGenRef = useRef(0);
+  const cloudPullWatchdogRef = useRef(null);
   const syncRunId = useRef(0);
   const persistTimer = useRef(null);
   const baseRowsRef = useRef(baseRows);
@@ -659,18 +668,15 @@ export default function App() {
       }
       setWorkspaceUpdatedAt(data.updatedAt || '');
       saveWorkspaceSnapshot(teamCode, data);
-      if (data.payload?.cache?.syncedAt || data.payload?.cache?.rows?.length) {
-        suppressAutoSyncRef.current = true;
-      }
-      if (
-        data.payload?.ownerClientId &&
-        data.payload.ownerClientId !== getClientId() &&
-        data.payload?.cache?.rows?.length
-      ) {
-        suppressAutoSyncRef.current = true;
-      }
     }
     return data;
+  }, []);
+
+  const clearCloudPullWatchdog = useCallback(() => {
+    if (cloudPullWatchdogRef.current) {
+      clearTimeout(cloudPullWatchdogRef.current);
+      cloudPullWatchdogRef.current = null;
+    }
   }, []);
 
   const loadTeamWorkspace = useCallback(async (teamCode) => {
@@ -696,19 +702,58 @@ export default function App() {
     setCloudStatus(`Команда «${data.name || data.teamCode}»`);
   }, [refreshTeamWorkspace, workspaceUpdatedAt]);
 
+  const finishCloudPull = useCallback(
+    (generation) => {
+      if (cloudPullGenRef.current !== generation) return;
+      clearCloudPullWatchdog();
+      setCloudRefreshing(false);
+      cloudBootstrappedRef.current = true;
+      skipCloudSave.current = false;
+    },
+    [clearCloudPullWatchdog]
+  );
+
+  const runCloudPullInBackground = useCallback(
+    (teamCode, { hadCachedData = false } = {}) => {
+      const normalized = String(teamCode || '').trim().toUpperCase();
+      if (!normalized) return;
+
+      const generation = ++cloudPullGenRef.current;
+      setCloudRefreshing(true);
+      setCloudPullError('');
+      clearCloudPullWatchdog();
+      cloudPullWatchdogRef.current = setTimeout(() => {
+        if (cloudPullGenRef.current !== generation) return;
+        cloudPullGenRef.current += 1;
+        clearCloudPullWatchdog();
+        setCloudRefreshing(false);
+        cloudBootstrappedRef.current = true;
+        skipCloudSave.current = false;
+        setCloudPullError('Не удалось загрузить — нажмите «Повторить»');
+        if (!hadCachedData) {
+          setCloudStatus('Облако не ответило за 30 с — показаны локальные данные');
+        }
+      }, CLOUD_PULL_TIMEOUT_MS);
+
+      loadTeamWorkspace(normalized)
+        .catch((err) => {
+          if (!err.needsTeam) {
+            setCloudPullError(err.message || 'Не удалось загрузить — нажмите «Повторить»');
+            if (!hadCachedData) {
+              setCloudStatus('Не удалось загрузить облако — показаны локальные данные');
+            }
+          }
+        })
+        .finally(() => finishCloudPull(generation));
+    },
+    [clearCloudPullWatchdog, finishCloudPull, loadTeamWorkspace]
+  );
+
   const retryCloudPull = useCallback(() => {
     const candidate = team || getTeamFromUrl() || loadStoredTeam();
     if (!candidate) return;
-    setCloudPullError('');
-    setCloudRefreshing(true);
-    loadTeamWorkspace(candidate)
-      .catch((err) => {
-        if (!err.needsTeam) {
-          setCloudPullError(err.message || 'Не удалось загрузить облако');
-        }
-      })
-      .finally(() => setCloudRefreshing(false));
-  }, [team, loadTeamWorkspace]);
+    runCloudPullInBackground(candidate, { hadCachedData: bootHadCachedData.current });
+  }, [team, runCloudPullInBackground]);
 
   useEffect(() => {
     if (!team || loading || enriching) return undefined;
@@ -787,50 +832,34 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    async function syncCloud() {
-      const candidate = getTeamFromUrl() || loadStoredTeam();
-      if (!candidate) {
-        cloudBootstrappedRef.current = true;
-        skipCloudSave.current = false;
-        return;
-      }
-
-      setTeam(candidate);
-      ensureTeamInUrl(candidate);
-
-      const hasCachedRows = Boolean(bootPayload?.cache?.rows?.length);
-      skipCloudSave.current = true;
-      if (hasCachedRows || bootPayload?.cache?.syncedAt) {
-        suppressAutoSyncRef.current = true;
-      }
-
-      const runCloudPull = () => {
-        setCloudRefreshing(true);
-        setCloudPullError('');
-        loadTeamWorkspace(candidate)
-          .catch((err) => {
-            if (!err.needsTeam) {
-              setCloudPullError(err.message || 'Не удалось загрузить облако');
-              if (!hasCachedRows) {
-                setCloudStatus('Не удалось загрузить облако — показаны локальные данные');
-              }
-            }
-          })
-          .finally(() => {
-            setCloudRefreshing(false);
-            cloudBootstrappedRef.current = true;
-            skipCloudSave.current = false;
-          });
-      };
-
-      if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(runCloudPull, { timeout: hasCachedRows ? 4000 : 100 });
-      } else {
-        setTimeout(runCloudPull, hasCachedRows ? 300 : 0);
-      }
+    const candidate = getTeamFromUrl() || loadStoredTeam();
+    if (!candidate) {
+      cloudBootstrappedRef.current = true;
+      skipCloudSave.current = false;
+      return undefined;
     }
-    syncCloud();
-  }, []);
+
+    ensureTeamInUrl(candidate);
+    skipCloudSave.current = true;
+
+    const hadCachedData = bootHadCachedData.current;
+    const schedulePull = () => runCloudPullInBackground(candidate, { hadCachedData });
+
+    let idleId = null;
+    let timeoutId = null;
+    if (typeof requestIdleCallback === 'function') {
+      idleId = requestIdleCallback(schedulePull, { timeout: hadCachedData ? 4000 : 100 });
+    } else {
+      timeoutId = setTimeout(schedulePull, hadCachedData ? 300 : 0);
+    }
+
+    return () => {
+      if (idleId != null && typeof cancelIdleCallback === 'function') cancelIdleCallback(idleId);
+      if (timeoutId != null) clearTimeout(timeoutId);
+      cloudPullGenRef.current += 1;
+      clearCloudPullWatchdog();
+    };
+  }, [clearCloudPullWatchdog, runCloudPullInBackground]);
 
   useEffect(() => {
     if (persistTimer.current) clearTimeout(persistTimer.current);
@@ -871,7 +900,7 @@ export default function App() {
       for (let attempt = 0; attempt < CLOUD_SAVE_MAX_ATTEMPTS; attempt += 1) {
         if (generation !== cloudSaveGenRef.current) return;
         try {
-          await pushToCloud({ notify: 'success' });
+          await pushToCloud({ notify: 'none' });
           return;
         } catch {
           if (attempt < CLOUD_SAVE_MAX_ATTEMPTS - 1) {
@@ -1301,8 +1330,7 @@ export default function App() {
     setTokenInvalid(false);
     setError('');
     changeSection('data');
-    runSync('quick');
-  }, [runSync]);
+  }, [changeSection]);
 
   const handleProfileRemove = useCallback(
     async (id) => {
@@ -1390,38 +1418,6 @@ export default function App() {
       teamAccess,
     ]
   );
-
-  useEffect(() => {
-    if (cloudRefreshing || suppressAutoSyncRef.current || loading || enriching || !hasOwnWbToken) {
-      return;
-    }
-    if (!baseRows.length) return;
-    if (syncedAt) {
-      suppressAutoSyncRef.current = true;
-      return;
-    }
-    if (bootHadRows.current) return;
-
-    const reportSalesCount = baseRows.filter((row) => Number(row.reportSales) > 0).length;
-    const needsReport =
-      meta?.syncMode === 'bootstrap' ||
-      meta?.realizationLoaded === false ||
-      meta?.realizationCatalogMismatch === true ||
-      (meta?.catalogPricesOverlapPct != null && meta.catalogPricesOverlapPct < 0.85) ||
-      (meta?.realizationLoaded == null &&
-        !meta?.realizationPeriod &&
-        !meta?.realizationError &&
-        reportSalesCount === 0);
-
-    if (!needsReport) return;
-
-    suppressAutoSyncRef.current = true;
-    runSync(
-      meta?.realizationCatalogMismatch || (meta?.catalogPricesOverlapPct != null && meta.catalogPricesOverlapPct < 0.85)
-        ? 'full'
-        : 'quick'
-    );
-  }, [cloudRefreshing, loading, enriching, hasOwnWbToken, baseRows, meta, runSync]);
 
   const syncActive = loading || enriching;
   const showSyncProgress = Boolean(syncSteps?.length && (syncActive || syncSteps.some((s) => s.status === 'error')));
