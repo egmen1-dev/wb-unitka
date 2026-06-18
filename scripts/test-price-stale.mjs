@@ -1,11 +1,13 @@
 /**
- * Price staleness + row patch helpers.
+ * Sync cache helpers: realization staleness + price row patches.
  * Run: node scripts/test-price-stale.mjs
  */
 import {
-  PRICES_MAX_AGE_MS,
+  REALIZATION_MAX_AGE_MS,
   applyPriceUpdatesToRows,
-  isPricesStale,
+  isRealizationStale,
+  resolveRealizationSyncedAt,
+  shouldSkipRealizationFetch,
 } from '../lib/wb-sync-cache.js';
 
 let failed = 0;
@@ -15,11 +17,28 @@ function check(label, ok) {
 }
 
 const fresh = new Date().toISOString();
-const stale = new Date(Date.now() - PRICES_MAX_AGE_MS - 60_000).toISOString();
+const stale = new Date(Date.now() - REALIZATION_MAX_AGE_MS - 60_000).toISOString();
 
-check('fresh syncedAt is not stale', !isPricesStale(fresh));
-check('old syncedAt is stale', isPricesStale(stale));
-check('missing syncedAt is stale', isPricesStale(null));
+check('fresh realizationSyncedAt is not stale', !isRealizationStale(fresh));
+check('old realizationSyncedAt is stale', isRealizationStale(stale));
+check('missing realizationSyncedAt is stale', isRealizationStale(null));
+
+const cacheWithSnapshot = {
+  realizationSnapshot: { byNmId: {}, byVendorCode: {} },
+  realizationSyncedAt: fresh,
+};
+check(
+  'skip realization when cache is fresh',
+  shouldSkipRealizationFetch({ mode: 'quick', wbCache: cacheWithSnapshot, fallbackSyncedAt: null })
+);
+check(
+  'full sync always fetches realization',
+  !shouldSkipRealizationFetch({ mode: 'full', wbCache: cacheWithSnapshot, fallbackSyncedAt: null })
+);
+check(
+  'resolveRealizationSyncedAt falls back to syncedAt',
+  resolveRealizationSyncedAt({ realizationSnapshot: {} }, fresh) === fresh
+);
 
 const rows = [
   { nmId: 8030700646, vendorCode: '8030700646', salePrice: 32450, basePrice: 35000, ourPrice: 32450 },
@@ -36,9 +55,13 @@ check(
 );
 check('patch leaves unmatched rows', patched[1].salePrice === 1000);
 check('patch preserves vendorCode', patched[0].vendorCode === '8030700646');
+check(
+  'patch resets retailPricePerUnit to new sale',
+  patched[0].retailPricePerUnit === 7000
+);
 
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);
 }
-console.log('\nAll price-stale checks passed');
+console.log('\nAll sync-cache checks passed');

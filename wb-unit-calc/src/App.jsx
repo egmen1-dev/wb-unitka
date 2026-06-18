@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import { DEFAULT_UNIT_SETTINGS, mergeUnitSettings } from '@lib/unit-economics/settings.js';
 import UpdateBanner from './components/UpdateBanner';
 import AppShell from './components/AppShell';
@@ -73,9 +73,15 @@ import {
   saveWbProductCache,
 } from './lib/storage';
 import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';
-import { applyPriceUpdatesToRows, buildEffectiveWbCache, isPricesStale } from '@lib/wb-sync-cache.js';
+import {
+  applyPriceUpdatesToRows,
+  buildEffectiveWbCache,
+  isRealizationStale,
+  resolveRealizationSyncedAt,
+  shouldSkipRealizationFetch,
+} from '@lib/wb-sync-cache.js';
 import { createRecalcRows } from './lib/recalc-rows-cache';
-import { setProductOverride } from './lib/product-overrides';
+import { setProductOverride, reconcileDraftOverridesAfterPricePatch } from './lib/product-overrides';
 import { readJsonResponse } from './lib/http';
 import { isAdvertRateLimitMessage } from '@lib/wb-advert-stats.js';
 
@@ -359,6 +365,7 @@ export default function App() {
   const skipCloudSave = useRef(true);
   const syncRunId = useRef(0);
   const priceRefreshStartedRef = useRef(false);
+  const realizationRefreshStartedRef = useRef(false);
   const persistTimer = useRef(null);
   const pushToCloudRef = useRef(async () => {});
   const workspaceUpdatedAtRef = useRef(workspaceUpdatedAt);
@@ -384,11 +391,9 @@ export default function App() {
     [baseRows]
   );
 
-  const deferredBaseRows = useDeferredValue(baseRows);
-
   const rows = useMemo(
-    () => recalcRowsCached(deferredBaseRows, purchases, settings, productOverrides),
-    [deferredBaseRows, purchases, settings, productOverrides]
+    () => recalcRowsCached(baseRows, purchases, settings, productOverrides),
+    [baseRows, purchases, settings, productOverrides]
   );
 
   const isTeamCreator = useMemo(
@@ -765,6 +770,7 @@ export default function App() {
           cardsSyncedAt: data.cardsSyncedAt || prev?.cardsSyncedAt || data.syncedAt,
           tariffCache: data.tariffCache || prev?.tariffCache || null,
           realizationSnapshot: data.realizationSnapshot || prev?.realizationSnapshot || null,
+          realizationSyncedAt: data.realizationSyncedAt || prev?.realizationSyncedAt || null,
         }));
       }
       if (activeCatalog?.byDigitKey) {
@@ -833,6 +839,8 @@ export default function App() {
         realizationCatalogMismatch: data.realizationCatalogMismatch ?? prev.realizationCatalogMismatch,
         catalogPricesOverlapPct: data.catalogPricesOverlapPct ?? prev.catalogPricesOverlapPct,
         realizationLoaded: data.realizationLoaded ?? prev.realizationLoaded ?? data.syncMode !== 'bootstrap',
+        realizationSyncedAt: data.realizationSyncedAt ?? prev.realizationSyncedAt,
+        realizationSkippedDuringSync: data.realizationSkipped ?? prev.realizationSkippedDuringSync,
         sellerAvgDeliveryHours: data.sellerAvgDeliveryHours ?? prev.sellerAvgDeliveryHours,
         deliveryPeriod: data.deliveryPeriod ?? prev.deliveryPeriod,
         deliveryError: data.deliveryError ?? prev.deliveryError,
@@ -942,14 +950,16 @@ export default function App() {
 
       const matched = Number(data.pricesMatched) || 0;
       if (matched > 0 && data.priceUpdates) {
-        startTransition(() => {
-          setBaseRows((prev) => applyPriceUpdatesToRows(prev, data.priceUpdates));
-          setSyncedAt(data.syncedAt || new Date().toISOString());
-          setMeta((prev) => ({
-            ...prev,
-            pricesSyncedAt: data.pricesSyncedAt || data.syncedAt || prev.pricesSyncedAt,
-          }));
-        });
+        recalcRowsCached.invalidate();
+        setBaseRows((prev) => applyPriceUpdatesToRows(prev, data.priceUpdates));
+        setProductOverrides((prev) =>
+          reconcileDraftOverridesAfterPricePatch(baseRowsRef.current, data.priceUpdates, prev)
+        );
+        setSyncedAt(data.syncedAt || new Date().toISOString());
+        setMeta((prev) => ({
+          ...prev,
+          pricesSyncedAt: data.pricesSyncedAt || data.syncedAt || prev.pricesSyncedAt,
+        }));
         setCloudStatus(
           `Цены WB обновлены · ${matched} из ${data.catalogTotal || baseRows.length} артикулов`
         );
@@ -1102,43 +1112,57 @@ export default function App() {
         }
 
         setEnriching(true);
-        setStep('realization', { status: 'running', detail: 'Еженедельный отчёт WB…' }, { force: true });
-        setHint('Отчёт реализации…', { force: true });
-        const realizationData = await syncFromWb({
-          token: activeProfile.token,
-          purchases,
-          settings,
-          mode: needsCatalog ? 'full' : 'quick',
-          phase: 'realization',
+        const skipRealizationPhase = shouldSkipRealizationFetch({
+          mode,
           wbCache: cache,
+          fallbackSyncedAt: syncedAt,
         });
-        if (isStale()) return;
-        cache = {
-          products: realizationData.productCache?.length ? realizationData.productCache : cache.products,
-          fullCatalogAt: realizationData.fullCatalogAt || cache.fullCatalogAt,
-          cardsSyncedAt: realizationData.cardsSyncedAt || cache.cardsSyncedAt,
-          tariffCache: realizationData.tariffCache || cache.tariffCache || null,
-          realizationSnapshot: realizationData.realizationSnapshot || cache.realizationSnapshot || null,
-        };
-        applySyncResult(realizationData);
-        partialReady = true;
-        setSyncPartialReady(true);
-        setLoading(false);
-        const realizationDetail = realizationData.realizationError
-          ? realizationData.realizationTotalSales > 0
-            ? `${realizationData.realizationTotalSales} продаж · Statistics`
-            : 'ошибка доступа'
-          : realizationData.realizationPeriod
-            ? `${realizationData.realizationTotalSales || 0} продаж`
-            : 'нет строк';
-        setStep('realization', {
-          status:
-            realizationData.realizationError && !realizationData.realizationTotalSales
-              ? 'error'
-              : 'done',
-          detail: realizationDetail,
-        }, { force: true });
-        setHint('', { force: true });
+        if (skipRealizationPhase) {
+          const cachedDetail = meta?.realizationPeriod
+            ? `${meta.realizationTotalSales || 0} продаж · из кэша`
+            : 'из кэша · актуален';
+          setStep('realization', { status: 'done', detail: cachedDetail }, { force: true });
+        } else {
+          setStep('realization', { status: 'running', detail: 'Еженедельный отчёт WB…' }, { force: true });
+          setHint('Отчёт реализации…', { force: true });
+          const realizationData = await syncFromWb({
+            token: activeProfile.token,
+            purchases,
+            settings,
+            mode: needsCatalog ? 'full' : 'quick',
+            phase: 'realization',
+            wbCache: cache,
+          });
+          if (isStale()) return;
+          cache = {
+            products: realizationData.productCache?.length ? realizationData.productCache : cache.products,
+            fullCatalogAt: realizationData.fullCatalogAt || cache.fullCatalogAt,
+            cardsSyncedAt: realizationData.cardsSyncedAt || cache.cardsSyncedAt,
+            tariffCache: realizationData.tariffCache || cache.tariffCache || null,
+            realizationSnapshot: realizationData.realizationSnapshot || cache.realizationSnapshot || null,
+            realizationSyncedAt:
+              realizationData.realizationSyncedAt || cache.realizationSyncedAt || realizationData.syncedAt,
+          };
+          applySyncResult(realizationData);
+          partialReady = true;
+          setSyncPartialReady(true);
+          setLoading(false);
+          const realizationDetail = realizationData.realizationError
+            ? realizationData.realizationTotalSales > 0
+              ? `${realizationData.realizationTotalSales} продаж · Statistics`
+              : 'ошибка доступа'
+            : realizationData.realizationPeriod
+              ? `${realizationData.realizationTotalSales || 0} продаж`
+              : 'нет строк';
+          setStep('realization', {
+            status:
+              realizationData.realizationError && !realizationData.realizationTotalSales
+                ? 'error'
+                : 'done',
+            detail: realizationDetail,
+          }, { force: true });
+          setHint('', { force: true });
+        }
 
         setStep('enrich', { status: 'running', detail: 'Остатки, заказы, реклама…' }, { force: true });
         setHint('Остатки и реклама…', { force: true });
@@ -1200,7 +1224,7 @@ export default function App() {
         }
       }
     },
-    [activeProfile, purchases, settings, wbProductCache, baseRows, syncedAt, applySyncResult]
+    [activeProfile, purchases, settings, wbProductCache, baseRows, syncedAt, meta, applySyncResult]
   );
 
   const handleSync = useCallback(() => runSync('quick'), [runSync]);
@@ -1247,7 +1271,6 @@ export default function App() {
   useEffect(() => {
     if (cloudSyncing || cloudRefreshing || loading || enriching || priceRefreshing) return;
     if (!activeProfile?.token || !canSyncWb || !baseRows.length) return;
-    if (!isPricesStale(syncedAt)) return;
     if (priceRefreshStartedRef.current) return;
 
     priceRefreshStartedRef.current = true;
@@ -1261,8 +1284,50 @@ export default function App() {
     activeProfile?.token,
     canSyncWb,
     baseRows.length,
-    syncedAt,
     refreshPrices,
+  ]);
+
+  useEffect(() => {
+    if (cloudSyncing || cloudRefreshing || loading || enriching || priceRefreshing) return;
+    if (!activeProfile?.token || !canSyncWb || !baseRows.length || !syncedAt) return;
+    if (realizationRefreshStartedRef.current) return;
+
+    const cache = buildEffectiveWbCache(wbProductCache, baseRows, syncedAt);
+    if (!cache?.realizationSnapshot) return;
+
+    const realizationAt = resolveRealizationSyncedAt(cache, syncedAt);
+    if (!isRealizationStale(realizationAt)) return;
+
+    realizationRefreshStartedRef.current = true;
+    (async () => {
+      try {
+        const data = await syncFromWb({
+          token: activeProfile.token,
+          purchases,
+          settings,
+          mode: 'quick',
+          phase: 'realization',
+          wbCache: cache,
+        });
+        applySyncResult(data);
+      } catch (err) {
+        setCloudStatus(`Не удалось обновить отчёт реализации: ${err.message}`);
+      }
+    })();
+  }, [
+    cloudSyncing,
+    cloudRefreshing,
+    loading,
+    enriching,
+    priceRefreshing,
+    activeProfile?.token,
+    canSyncWb,
+    baseRows.length,
+    syncedAt,
+    wbProductCache,
+    purchases,
+    settings,
+    applySyncResult,
   ]);
 
   const syncActive = loading || enriching || priceRefreshing;
@@ -1511,10 +1576,10 @@ export default function App() {
                 · каталог от {new Date(meta.fullCatalogAt).toLocaleDateString('ru-RU')}
               </>
             ) : null}
-            {isPricesStale(syncedAt) && !priceRefreshing ? (
+            {meta.realizationSyncedAt && !isRealizationStale(meta.realizationSyncedAt) ? (
               <>
                 {' '}
-                · <span className="text-amber-800">цены устарели — обновляем…</span>
+                · <span className="text-slate-500">отчёт актуален</span>
               </>
             ) : null}
             {priceRefreshing ? ' · обновление цен…' : null}

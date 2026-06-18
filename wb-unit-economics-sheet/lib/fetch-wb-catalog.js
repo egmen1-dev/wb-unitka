@@ -52,7 +52,9 @@ import {
   findMissingNmIds,
   mergeProductCache,
   minutesSince,
+  resolveRealizationSyncedAt,
   shouldFetchFullCatalog,
+  shouldSkipRealizationFetch,
   slimProductsForCache,
 } from '../../lib/wb-sync-cache.js';
 import {
@@ -455,6 +457,13 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
   const wbCache = options.wbCache || null;
   const realizationOnly = phase === 'realization' || options.realizationOnly === true;
   const skipRealization = options.skipRealization === true;
+  const forceRealization = options.forceRealization === true || mode === 'full';
+  const skipRealizationDueToFresh =
+    !forceRealization &&
+    shouldSkipRealizationFetch({ mode, wbCache, fallbackSyncedAt: null });
+  const effectiveSkipRealization = skipRealization || skipRealizationDueToFresh;
+  const realizationSkippedCache =
+    skipRealizationDueToFresh && !skipRealization && Boolean(wbCache?.realizationSnapshot);
   const syncSettings = options.settings || {};
   const regionSalesDays = [7, 14, 30].includes(Number(syncSettings.regionDemandDays))
     ? Number(syncSettings.regionDemandDays)
@@ -479,7 +488,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
   const profile = {
     ordersPages: isBootstrap || realizationOnly ? 0 : 1,
     realizationPages:
-      isBootstrap || skipRealization
+      isBootstrap || effectiveSkipRealization
         ? 0
         : mode === 'full'
           ? 8
@@ -553,7 +562,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
             ...emptyRealization,
             error: err.message || 'Не удалось загрузить отчёт реализации (Finance / Statistics API)',
           }))
-        : skipRealization && wbCache?.realizationSnapshot
+        : effectiveSkipRealization && wbCache?.realizationSnapshot
           ? Promise.resolve(restoreRealizationResult(wbCache.realizationSnapshot))
           : Promise.resolve(emptyRealization),
       isBootstrap
@@ -738,6 +747,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
     const realizationOverlap = computeRealizationCatalogOverlap(products, realization);
     const advertLookup = serializeAdvertLookup(advertStats.byNmId, products);
     const now = new Date().toISOString();
+    const fetchedRealization = profile.realizationPages > 0;
 
     return {
       phase: realizationOnly ? 'realization' : 'data',
@@ -745,6 +755,10 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       syncMode: isBootstrap ? 'bootstrap' : mode === 'full' ? 'full' : 'quick',
       realizationLoaded: !isBootstrap,
       realizationSnapshot: isBootstrap ? null : serializeRealizationResult(realization),
+      realizationSyncedAt: fetchedRealization
+        ? now
+        : resolveRealizationSyncedAt(wbCache, null),
+      realizationSkipped: realizationSkippedCache,
       fullCatalogAt: wbCache?.fullCatalogAt || now,
       cardsSyncedAt: now,
       cardsDeltaCount,

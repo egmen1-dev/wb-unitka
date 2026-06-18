@@ -38,3 +38,40 @@ export function setProductOverride(overrides, vendorCode, field, value) {
 
   return next;
 }
+
+/** Сбрасывает черновую цену, если она совпадала с устаревшей продажей до патча WB. */
+export function reconcileDraftOverridesAfterPricePatch(rows, priceUpdates, overrides = {}) {
+  if (!rows?.length || !priceUpdates || !overrides) return overrides;
+
+  const byNm = new Map();
+  if (priceUpdates instanceof Map) {
+    for (const [nmId, patch] of priceUpdates) byNm.set(Number(nmId), patch);
+  } else {
+    for (const [nmId, patch] of Object.entries(priceUpdates)) {
+      if (patch) byNm.set(Number(nmId), patch);
+    }
+  }
+  if (!byNm.size) return overrides;
+
+  let next = overrides;
+  for (const row of rows) {
+    const patch = byNm.get(Number(row.nmId));
+    if (!patch) continue;
+
+    const vendor = String(row.vendorCode || '');
+    const draftRaw = getProductOverride(next, vendor).draftSalePrice;
+    if (draftRaw == null || draftRaw === '') continue;
+
+    const draftNum = Number(draftRaw);
+    if (!Number.isFinite(draftNum)) continue;
+
+    const oldSale = Number(row.salePrice);
+    const oldBase = Number(row.basePrice);
+    const oldOur = Number(row.ourPrice);
+    if (draftNum === oldSale || draftNum === oldBase || draftNum === oldOur) {
+      next = setProductOverride(next, vendor, 'draftSalePrice', '');
+    }
+  }
+
+  return next;
+}

@@ -10,11 +10,15 @@ const ROW_SIG_KEYS = [
   'salePrice',
   'basePrice',
   'ourPrice',
+  'retailPricePerUnit',
   'purchasePrice',
   'stockFbs',
   'stockFbo',
   'orders7d',
   'fbsAvgDeliveryHours',
+  'lengthCm',
+  'widthCm',
+  'heightCm',
   'volumeLiters',
   'fbsCoeff',
   'fboCoeff',
@@ -36,7 +40,16 @@ function buildRowSig(row) {
 
 function overrideSig(overrides, vendor) {
   const o = getProductOverride(overrides, vendor);
-  return `${o.packagingCost ?? ''}\x1f${o.processingCost ?? ''}\x1f${o.extraCosts ?? ''}\x1f${o.draftSalePrice ?? ''}`;
+  const draft = o.draftSalePrice;
+  const draftSig =
+    draft == null || draft === '' ? '' : Number.isFinite(Number(draft)) ? Number(draft) : String(draft);
+  return `${o.packagingCost ?? ''}\x1f${o.processingCost ?? ''}\x1f${o.extraCosts ?? ''}\x1f${draftSig}`;
+}
+
+function draftOverrideRaw(productOverrides, vendor) {
+  const raw = getProductOverride(productOverrides, vendor).draftSalePrice;
+  if (raw == null || raw === '') return null;
+  return raw;
 }
 
 /** Вход «что если» по черновой цене: все ценовые поля и без факта из отчёта. */
@@ -64,27 +77,33 @@ export function draftScenarioSettings(settings) {
 }
 
 function applyDraftEconomics(calc, calcInput, settings, productOverrides, vendor) {
-  const draftRaw = getProductOverride(productOverrides, vendor).draftSalePrice;
-  if (draftRaw == null || draftRaw === '') {
-    return {
-      ...calc,
-      draftSalePrice: null,
-      draftProfitFbo: null,
-      draftProfitFbs: null,
-      draftMarginFbo: null,
-      draftMarginFbs: null,
-    };
+  const emptyDraft = {
+    ...calc,
+    draftSalePrice: null,
+    draftProfitFbo: null,
+    draftProfitFbs: null,
+    draftMarginFbo: null,
+    draftMarginFbs: null,
+  };
+
+  const overrideRaw = draftOverrideRaw(productOverrides, vendor);
+  const salePrice = Number(calc.salePrice ?? calcInput.salePrice);
+  const hasOverride = overrideRaw != null;
+  const draftPrice = hasOverride ? Number(overrideRaw) : salePrice;
+
+  if (!Number.isFinite(draftPrice) || draftPrice <= 0) {
+    return emptyDraft;
   }
 
-  const draftPrice = Number(draftRaw);
-  if (!Number.isFinite(draftPrice) || draftPrice <= 0) {
+  // Без ручной черновой — зеркалим финальный расчёт (маржа* всегда следует за «Продажа»).
+  if (!hasOverride) {
     return {
       ...calc,
-      draftSalePrice: null,
-      draftProfitFbo: null,
-      draftProfitFbs: null,
-      draftMarginFbo: null,
-      draftMarginFbs: null,
+      draftSalePrice: draftPrice,
+      draftProfitFbo: calc.profitFbo,
+      draftProfitFbs: calc.profitFbs,
+      draftMarginFbo: calc.marginFbo,
+      draftMarginFbs: calc.marginFbs,
     };
   }
 
@@ -117,7 +136,7 @@ export function createRecalcRows() {
   const byNm = new Map();
   let settingsSig = '';
 
-  return function recalcRows(baseRows, purchases, settings, productOverrides = {}) {
+  function recalcRows(baseRows, purchases, settings, productOverrides = {}) {
     settingsSig = JSON.stringify(settings);
     const out = new Array(baseRows.length);
     const activeNm = new Set();
@@ -153,5 +172,11 @@ export function createRecalcRows() {
     }
 
     return out;
+  }
+
+  recalcRows.invalidate = () => {
+    byNm.clear();
   };
+
+  return recalcRows;
 }

@@ -114,6 +114,7 @@ function slimPayloadForLocalCache(payload) {
       ? {
           tariffCache: wb.tariffCache || null,
           realizationSnapshot: wb.realizationSnapshot || null,
+          realizationSyncedAt: wb.realizationSyncedAt || null,
         }
       : null;
   return {

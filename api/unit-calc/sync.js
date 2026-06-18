@@ -128,6 +128,8 @@ export default async function handler(req, res) {
       syncMode: snapshot.syncMode,
       realizationLoaded: snapshot.realizationLoaded ?? snapshot.syncMode !== 'bootstrap',
       realizationSnapshot: snapshot.realizationSnapshot || null,
+      realizationSyncedAt: snapshot.realizationSyncedAt || null,
+      realizationSkipped: snapshot.realizationSkipped ?? false,
       fullCatalogAt: snapshot.fullCatalogAt,
       cardsSyncedAt: snapshot.cardsSyncedAt,
       cardsDeltaCount: snapshot.cardsDeltaCount ?? 0,
