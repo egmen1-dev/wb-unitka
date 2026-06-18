@@ -15,6 +15,9 @@ import {
 import { completeYandexGpt, pickYandexModel, readYandexConfig } from '../../lib/yandex-gpt.js';
 import { serializeFeedback } from '../../lib/wb-feedbacks.js';
 
+const MAX_QUALITY_RETRIES = 3;
+const QUALITY_ERROR = 'Не удалось сгенерировать качественный ответ. Попробуйте перегенерировать.';
+
 function readToken(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
   const fromHeader = String(header).replace(/^Bearer\s+/i, '').trim();
@@ -129,6 +132,34 @@ function reviewCharCount(feedback) {
   return [feedback?.text, feedback?.pros, feedback?.cons].filter(Boolean).join(' ').length;
 }
 
+async function callAiProvider({
+  yandexConfigured,
+  openaiKey,
+  userPrompt,
+  systemPrompt,
+  regenerate,
+  reviewLength,
+}) {
+  if (yandexConfigured) {
+    try {
+      const draft = await generateWithYandex(userPrompt, systemPrompt, { regenerate, reviewLength });
+      return { draft, provider: 'yandex', source: regenerate ? 'yandex-regen' : 'yandex' };
+    } catch (error) {
+      console.error('[feedbacks/feedback-draft] YandexGPT', error);
+      if (openaiKey) {
+        const draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, { regenerate });
+        return { draft, provider: 'openai', source: regenerate ? 'openai-regen' : 'openai' };
+      }
+      throw error;
+    }
+  }
+  if (openaiKey) {
+    const draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, { regenerate });
+    return { draft, provider: 'openai', source: regenerate ? 'openai-regen' : 'openai' };
+  }
+  return null;
+}
+
 async function generateDraftWithQuality({
   userPrompt,
   systemPrompt,
@@ -136,61 +167,51 @@ async function generateDraftWithQuality({
   openaiKey,
   regenerate,
   reviewLength,
-  templateArgs,
   qualityContext,
 }) {
   let draft;
   let source;
   let provider;
-  let qualityRetried = false;
+  let qualityRetried = 0;
+  let activeSystemPrompt = systemPrompt;
 
-  const runAi = async (isRetry) => {
-    if (yandexConfigured) {
-      try {
-        draft = await generateWithYandex(userPrompt, systemPrompt, {
-          regenerate: isRetry || regenerate,
-          reviewLength,
-        });
-        source = isRetry || regenerate ? 'yandex-regen' : 'yandex';
-        provider = 'yandex';
-        return;
-      } catch (error) {
-        console.error('[feedbacks/feedback-draft] YandexGPT', error);
-        if (openaiKey) {
-          draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, {
-            regenerate: isRetry || regenerate,
-          });
-          source = isRetry || regenerate ? 'openai-regen' : 'openai';
-          provider = 'openai';
-          return;
-        }
-        throw error;
-      }
+  for (let attempt = 0; attempt <= MAX_QUALITY_RETRIES; attempt += 1) {
+    const isRetry = attempt > 0;
+    const aiResult = await callAiProvider({
+      yandexConfigured,
+      openaiKey,
+      userPrompt,
+      systemPrompt: activeSystemPrompt,
+      regenerate: isRetry || regenerate,
+      reviewLength,
+    });
+
+    if (!aiResult) {
+      throw new Error('AI не настроен');
     }
-    if (openaiKey) {
-      draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, {
-        regenerate: isRetry || regenerate,
-      });
-      source = isRetry || regenerate ? 'openai-regen' : 'openai';
-      provider = 'openai';
-      return;
+
+    draft = aiResult.draft;
+    source = aiResult.source;
+    provider = aiResult.provider;
+
+    const quality = validateDraftQuality(draft, qualityContext);
+    if (quality.ok) {
+      return { draft, source, provider, quality, qualityRetried };
     }
-    draft = buildTemplateDraft(templateArgs);
-    source = 'template-fallback';
-    provider = 'template';
-  };
 
-  await runAi(false);
-
-  let quality = validateDraftQuality(draft, qualityContext);
-  if (!quality.ok && provider !== 'template') {
-    qualityRetried = true;
-    const retrySystem = `${systemPrompt}\n\nПРЕДЫДУЩИЙ ОТВЕТ ОТКЛОНЁН: ${quality.issues.join('; ')}. Перепиши полностью, исправь все замечания.`;
-    await runAi(true);
-    quality = validateDraftQuality(draft, qualityContext);
+    if (attempt < MAX_QUALITY_RETRIES) {
+      qualityRetried += 1;
+      activeSystemPrompt = `${systemPrompt}\n\nПРЕДЫДУЩИЙ ОТВЕТ ОТКЛОНЁН (попытка ${attempt + 1}/${MAX_QUALITY_RETRIES}): ${quality.issues.join('; ')}. Перепиши полностью, исправь все замечания. Не используй шаблонные фразы.`;
+      console.warn('[feedbacks/feedback-draft] quality retry', attempt + 1, quality.issues);
+    } else {
+      const err = new Error(QUALITY_ERROR);
+      err.quality = quality;
+      err.provider = provider;
+      throw err;
+    }
   }
 
-  return { draft, source, provider, quality, qualityRetried };
+  throw new Error(QUALITY_ERROR);
 }
 
 function aiHint({ yandexConfigured, openaiConfigured }) {
@@ -250,7 +271,7 @@ export default async function handler(req, res) {
   const yandexConfigured = Boolean(readYandexConfig());
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
 
-  const templateArgs = { feedback, product, alternative, premiumUpsell, variationSeed };
+  const templateArgs = { feedback, product, alternative, premiumUpsell, variationSeed, scenario };
   const reviewLength = reviewCharCount(feedback);
   const allowChat = reviewAsksContact(feedback);
   const qualityContext = {
@@ -266,6 +287,7 @@ export default async function handler(req, res) {
   let provider = 'template';
   let quality = null;
   let qualityRetried = false;
+  let generationError = null;
 
   if (yandexConfigured || openaiKey) {
     try {
@@ -276,7 +298,6 @@ export default async function handler(req, res) {
         openaiKey,
         regenerate,
         reviewLength,
-        templateArgs,
         qualityContext,
       });
       draft = result.draft;
@@ -286,14 +307,47 @@ export default async function handler(req, res) {
       qualityRetried = result.qualityRetried;
     } catch (error) {
       console.error('[feedbacks/feedback-draft] AI generation failed', error);
-      draft = buildTemplateDraft(templateArgs);
-      source = 'template-fallback';
-      provider = 'template';
-      quality = validateDraftQuality(draft, qualityContext);
+      generationError = error.message || QUALITY_ERROR;
+      return res.status(503).json({
+        error: generationError,
+        hint:
+          error.quality?.issues?.length > 0
+            ? `Проблемы: ${error.quality.issues.slice(0, 3).join('; ')}`
+            : 'Проверьте ключи YandexGPT/OpenAI в Vercel или попробуйте перегенерировать.',
+        provider: error.provider || (yandexConfigured ? 'yandex' : 'openai'),
+        source: 'ai-error',
+        quality: error.quality || null,
+        qualityRetried: MAX_QUALITY_RETRIES,
+        yandexConfigured,
+        openaiConfigured: Boolean(openaiKey),
+        scenario: {
+          type: scenario.type,
+          label: scenario.label,
+          tone: scenario.tone,
+        },
+      });
     }
   } else {
     draft = buildTemplateDraft(templateArgs);
+    source = 'template';
+    provider = 'template';
     quality = validateDraftQuality(draft, qualityContext);
+    if (!quality.ok) {
+      return res.status(503).json({
+        error: QUALITY_ERROR,
+        hint: quality.issues.join('; '),
+        provider: 'template',
+        source: 'template-error',
+        quality,
+        yandexConfigured: false,
+        openaiConfigured: false,
+        scenario: {
+          type: scenario.type,
+          label: scenario.label,
+          tone: scenario.tone,
+        },
+      });
+    }
   }
 
   const validation = validateFeedbackAnswer(draft);

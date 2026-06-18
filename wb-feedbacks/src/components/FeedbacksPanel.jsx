@@ -123,6 +123,11 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
 
           <div className="rounded-lg border border-brand-200 bg-brand-50/50 px-4 py-3">
             <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">{draft.text}</p>
+            {draft.provider || draft.source ? (
+              <p className="mt-2 text-xs text-slate-400">
+                Источник: {formatProviderLabel(draft.provider, draft.source)}
+              </p>
+            ) : null}
           </div>
 
           {upsell?.article ? (
@@ -255,19 +260,35 @@ async function fetchAiConfigStatus() {
   };
 }
 
+function formatProviderLabel(provider, source) {
+  if (provider === 'yandex' || source?.startsWith('yandex')) return 'YandexGPT';
+  if (provider === 'openai' || source?.startsWith('openai')) return 'OpenAI';
+  if (source === 'ai-error' || provider === 'ai-error') return 'ошибка AI';
+  if (provider === 'template' || source?.startsWith('template')) return 'шаблон';
+  return provider || '—';
+}
+
 function formatDraftStatus(payload, { regenerate = false } = {}) {
+  if (payload.hint && payload.error) return payload.error;
   if (payload.hint) return payload.hint;
-  if (regenerate) return 'Новый вариант ответа готов';
+  if (regenerate) {
+    const label = formatProviderLabel(payload.provider, payload.source);
+    return `Новый вариант готов (${label})`;
+  }
+  const label = formatProviderLabel(payload.provider, payload.source);
   if (payload.provider === 'yandex' || payload.source?.startsWith('yandex')) {
-    return 'Черновик сгенерирован (YandexGPT)';
+    return `Черновик сгенерирован (${label})`;
   }
   if (payload.provider === 'openai' || payload.source?.startsWith('openai')) {
-    return 'Черновик сгенерирован (OpenAI)';
+    return `Черновик сгенерирован (${label})`;
+  }
+  if (payload.source === 'ai-error') {
+    return 'Ошибка генерации AI';
   }
   if (payload.yandexConfigured || payload.openaiConfigured) {
-    return 'Черновик по шаблону (AI недоступен, проверьте ключи в Vercel)';
+    return 'Черновик по шаблону (ошибка AI)';
   }
-  return 'Черновик по шаблону (AI не настроен на сервере)';
+  return `Черновик по шаблону (${label})`;
 }
 
 function formatApiError(payload, status, fallback = 'Не удалось загрузить отзывы') {
@@ -593,6 +614,7 @@ export default function FeedbacksPanel({ token }) {
           [feedback.id]: {
             text: payload.draft || '',
             source: payload.source,
+            provider: payload.provider || null,
             alternative: payload.alternative,
             premiumUpsell: payload.premiumUpsell,
             validation: payload.validation,
@@ -925,7 +947,14 @@ export default function FeedbacksPanel({ token }) {
                   />
                   <p className="mt-1 text-xs text-slate-400">
                     {(draft?.text || '').length} / 1000
-                    {draft?.source ? ` · ${draft.source}` : ''}
+                    {draft?.provider || draft?.source ? (
+                      <span className="ml-1 font-medium text-slate-500">
+                        · {formatProviderLabel(draft?.provider, draft?.source)}
+                      </span>
+                    ) : null}
+                    {draft?.qualityRetried ? (
+                      <span className="ml-1 text-slate-400">· перегенераций: {draft.qualityRetried}</span>
+                    ) : null}
                     {draft?.quality?.templateLike || (draft?.quality?.score != null && draft.quality.score < 60) ? (
                       <span className="ml-1 text-amber-600">
                         · перегенерируй, если звучит шаблонно
