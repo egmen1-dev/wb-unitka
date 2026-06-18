@@ -20,6 +20,12 @@ import { serializeFeedback } from '../../lib/wb-feedbacks.js';
 
 const MAX_QUALITY_RETRIES = 3;
 const QUALITY_ERROR = 'Не удалось сгенерировать качественный ответ. Попробуйте перегенерировать.';
+const PROMPT_VERSION = 'manager-v2';
+
+function readCommitSha() {
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || '';
+  return sha ? sha.slice(0, 7) : 'local';
+}
 
 function readToken(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
@@ -320,6 +326,8 @@ export default async function handler(req, res) {
       generationError = error.message || QUALITY_ERROR;
       return res.status(503).json({
         error: generationError,
+        promptVersion: PROMPT_VERSION,
+        commitSha: readCommitSha(),
         hint:
           error.quality?.issues?.length > 0
             ? `Проблемы: ${error.quality.issues.slice(0, 3).join('; ')}`
@@ -345,6 +353,8 @@ export default async function handler(req, res) {
     if (!quality.ok) {
       return res.status(503).json({
         error: QUALITY_ERROR,
+        promptVersion: PROMPT_VERSION,
+        commitSha: readCommitSha(),
         hint: quality.issues.join('; '),
         provider: 'template',
         source: 'template-error',
@@ -366,6 +376,8 @@ export default async function handler(req, res) {
     draft: validation.text,
     source,
     provider,
+    promptVersion: PROMPT_VERSION,
+    commitSha: readCommitSha(),
     regenerate,
     variationSeed,
     yandexConfigured,
