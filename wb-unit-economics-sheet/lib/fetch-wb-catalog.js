@@ -3,6 +3,8 @@ import {
   extractFbsStockForCard,
   extractPriceFromGoods,
   fetchAllPrices,
+  fetchPricesForNmIds,
+  indexPricesByVendorCode,
   fetchBoxTariffs,
   fetchCommissionTariffs,
   fetchContentCardsByNmIds,
@@ -50,7 +52,11 @@ import {
   cardToCachedProduct,
   collectAllSkus,
   findMissingNmIds,
+  buildPriceUpdatesForItems,
+  filterDeltaPriceUpdates,
+  lookupGoodsInPriceMap,
   mergeProductCache,
+  pricePatchFromGoods,
   minutesSince,
   resolveRealizationSyncedAt,
   shouldFetchFullCatalog,
@@ -226,12 +232,16 @@ function buildProduct(staticInfo, dims, ctx) {
   const catalogNmId = Number(staticInfo.nmId) || 0;
   const reportNmId = resolveReportNmId(ctx.realization, catalogNmId, staticInfo.vendorCode);
   const nmId = catalogNmId || reportNmId;
-  const goods =
-    ctx.pricesByNmId.get(catalogNmId) ??
-    (reportNmId !== catalogNmId ? ctx.pricesByNmId.get(reportNmId) : undefined);
-  const { price: ourPrice, oldPrice } = extractPriceFromGoods(goods);
-  const basePrice = oldPrice || ourPrice;
-  const salePrice = ourPrice || oldPrice;
+  const goods = lookupGoodsInPriceMap(
+    ctx.pricesByNmId,
+    ctx.pricesByVendor,
+    { nmId: catalogNmId, vendorCode: staticInfo.vendorCode, catalogNmId },
+    ctx.realization
+  );
+  const pricePatch = pricePatchFromGoods(goods);
+  const ourPrice = pricePatch?.ourPrice ?? 0;
+  const basePrice = pricePatch?.basePrice ?? ourPrice;
+  const salePrice = pricePatch?.salePrice ?? 0;
   const fboStockDetail =
     ctx.fboStocksDetailed.get(catalogNmId) ||
     ctx.fboStocksDetailed.get(reportNmId) ||
@@ -392,46 +402,84 @@ async function fetchCatalogChunkPhase(token, wbCache, catalogCursor, catalogMaxP
 }
 
 /** Только Prices API — обновляет salePrice/basePrice/ourPrice без полной синхронизации. */
-async function fetchPricesPhase(token, wbCache) {
-  return withWbApiToken(token, async () => {
-    const mergedCache = wbCache?.products || [];
-    if (!mergedCache.length) {
-      throw new Error('Нет кэша каталога. Сначала нажмите «Быстро» или «Полностью».');
-    }
+function collectPriceRefreshItems(rows, cacheProducts) {
+  const cacheByVendor = new Map();
+  const cacheByNm = new Map();
+  for (const product of cacheProducts || []) {
+    const vendor = String(product.vendorCode || '').trim();
+    const nmId = Number(product.nmId) || 0;
+    if (vendor) cacheByVendor.set(vendor, product);
+    if (nmId) cacheByNm.set(nmId, product);
+  }
 
-    const pricesByNmId = await fetchAllPrices();
+  const seen = new Map();
+  const add = (item) => {
+    let vendor = String(item?.vendorCode || '').trim();
+    let nmId = Number(item?.nmId) || 0;
+    if (!nmId && vendor) nmId = Number(cacheByVendor.get(vendor)?.nmId) || 0;
+    if (!vendor && nmId) vendor = String(cacheByNm.get(nmId)?.vendorCode || '').trim();
+    const key = vendor || String(nmId);
+    if (!key) return;
+    seen.set(key, { nmId: nmId || null, vendorCode: vendor || String(item?.vendorCode || '') });
+  };
+  for (const row of rows || []) add(row);
+  for (const product of cacheProducts || []) add(product);
+  return [...seen.values()];
+}
+
+async function fetchPricesPhase(token, wbCache, rows = []) {
+  return withWbApiToken(token, async () => {
     const realization = wbCache?.realizationSnapshot
       ? restoreRealizationResult(wbCache.realizationSnapshot)
       : { byNmId: new Map(), byVendorCode: new Map() };
 
-    const priceUpdates = {};
-    for (const product of mergedCache) {
-      const catalogNmId = Number(product.nmId) || 0;
-      if (!catalogNmId) continue;
-      const reportNmId = resolveReportNmId(realization, catalogNmId, product.vendorCode);
-      const goods =
-        pricesByNmId.get(catalogNmId) ??
-        (reportNmId !== catalogNmId ? pricesByNmId.get(reportNmId) : undefined);
-      const { price: ourPrice, oldPrice } = extractPriceFromGoods(goods);
-      const basePrice = oldPrice || ourPrice;
-      const salePrice = ourPrice || oldPrice;
-      if (salePrice > 0) {
-        priceUpdates[catalogNmId] = {
-          salePrice,
-          basePrice,
-          ourPrice: ourPrice || salePrice,
-        };
+    const patchedCache = patchCatalogNmIdsFromReport(wbCache?.products || [], realization);
+    const items = collectPriceRefreshItems(rows, patchedCache);
+    if (!items.length) {
+      throw new Error('Нет товаров для обновления цен. Сначала нажмите «Быстро» или «Полностью».');
+    }
+
+    let pricesByNmId = await fetchAllPrices();
+    const pricesByVendor = indexPricesByVendorCode(pricesByNmId);
+
+    const neededNmIds = items
+      .map((item) => {
+        const catalogNmId = Number(item.nmId) || 0;
+        return resolveReportNmId(realization, catalogNmId, item.vendorCode) || catalogNmId;
+      })
+      .filter(Boolean);
+    const missingNmIds = [...new Set(neededNmIds.filter((id) => !pricesByNmId.has(id)))];
+    if (missingNmIds.length) {
+      const extra = await fetchPricesForNmIds(missingNmIds);
+      for (const [nmId, goods] of extra) pricesByNmId.set(nmId, goods);
+      for (const [vendor, goods] of indexPricesByVendorCode(extra)) {
+        if (!pricesByVendor.has(vendor)) pricesByVendor.set(vendor, goods);
       }
     }
+
+    const { priceUpdates: allUpdates, pricesMatched } = buildPriceUpdatesForItems(
+      items,
+      pricesByNmId,
+      realization,
+      pricesByVendor
+    );
+
+    const delta =
+      rows?.length > 0
+        ? filterDeltaPriceUpdates(rows, allUpdates)
+        : { priceUpdates: allUpdates, updated: pricesMatched, unchanged: 0, missing: 0 };
 
     const now = new Date().toISOString();
     return {
       phase: 'prices',
       syncedAt: now,
       pricesSyncedAt: now,
-      priceUpdates,
-      pricesMatched: Object.keys(priceUpdates).length,
-      catalogTotal: mergedCache.length,
+      priceUpdates: delta.priceUpdates,
+      pricesMatched,
+      pricesUpdated: delta.updated,
+      pricesUnchanged: delta.unchanged,
+      pricesMissing: delta.missing,
+      catalogTotal: items.length,
     };
   });
 }
@@ -479,7 +527,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
   }
 
   if (phase === 'prices') {
-    return fetchPricesPhase(token, wbCache);
+    return fetchPricesPhase(token, wbCache, options.rows || []);
   }
 
   const cardsFresh = minutesSince(wbCache?.cardsSyncedAt) < 20;
@@ -703,6 +751,7 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
 
     const productCtx = {
       pricesByNmId,
+      pricesByVendor: indexPricesByVendorCode(pricesByNmId),
       fboStocksDetailed,
       ordersResult,
       realization,

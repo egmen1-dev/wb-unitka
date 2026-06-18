@@ -42,7 +42,7 @@ const before = recalc([baseRow], {}, settings, {})[0];
 const patched = applyPriceUpdatesToRows([baseRow], {
   8030700646: { salePrice: 7000, basePrice: 7000, ourPrice: 7000 },
 });
-const after = recalc(patched, {}, settings, {})[0];
+const after = recalc(patched.rows, {}, settings, {})[0];
 
 check(
   'sale price patch recalculates marginFbs',
@@ -57,17 +57,17 @@ check(
   after.retailPricePerUnit === 7000
 );
 
-const noOverride = recalc(patched, {}, settings, {})[0];
+const noOverride = recalc(patched.rows, {}, settings, {})[0];
 check(
   'draft margin mirrors final margin without override',
   noOverride.draftMarginFbs != null &&
     Math.abs(noOverride.draftMarginFbs - noOverride.marginFbs) < 1e-9
 );
 
-const withDraft7000 = recalc(patched, {}, settings, {
+const withDraft7000 = recalc(patched.rows, {}, settings, {
   '8030700646': { draftSalePrice: '7000' },
 })[0];
-const withDraft5000 = recalc(patched, {}, settings, {
+const withDraft5000 = recalc(patched.rows, {}, settings, {
   '8030700646': { draftSalePrice: '5000' },
 })[0];
 check(
@@ -98,7 +98,7 @@ check(
 );
 
 recalc.invalidate();
-const cachedAgain = recalc(patched, {}, settings, {})[0];
+const cachedAgain = recalc(patched.rows, {}, settings, {})[0];
 check('cache invalidate keeps correct margin after price patch', cachedAgain.marginFbs === after.marginFbs);
 
 if (failed > 0) {

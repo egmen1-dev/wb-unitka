@@ -76,8 +76,8 @@ import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';
 import {
   applyPriceUpdatesToRows,
   buildEffectiveWbCache,
-  isPriceDataStale,
   isRealizationStale,
+  mergeSyncRowsPreservingLocalPrices,
   mergeWorkspaceRowsPreservingLocalPrices,
   resolveRealizationSyncedAt,
   shouldSkipRealizationFetch,
@@ -813,7 +813,13 @@ export default function App() {
   const applySyncResult = useCallback(
     (data, { urgent = false } = {}) => {
       const commit = () => {
-      setBaseRows((prev) => mergeRowAdFields(prev, slimRowsForCache(data.rows)));
+      setBaseRows((prev) =>
+        mergeSyncRowsPreservingLocalPrices(
+          mergeRowAdFields(prev, slimRowsForCache(data.rows)),
+          prev,
+          metaRef.current?.pricesSyncedAt
+        )
+      );
       setSyncedAt(data.syncedAt);
       if (data.productCache?.length || data.tariffCache || data.realizationSnapshot) {
         setWbProductCache((prev) => ({
@@ -993,7 +999,7 @@ export default function App() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${activeProfile.token}`,
         },
-        body: JSON.stringify({ phase: 'prices', wbCache: cache }),
+        body: JSON.stringify({ phase: 'prices', wbCache: cache, rows: baseRowsRef.current }),
       });
       const { data } = await readJsonResponse(response);
       if (!response.ok) {
@@ -1001,27 +1007,46 @@ export default function App() {
       }
 
       const matched = Number(data.pricesMatched) || 0;
-      if (matched > 0 && data.priceUpdates) {
-        recalcRowsCached.invalidate();
+      const pricesUpdated = Number(data.pricesUpdated) || 0;
+      const pricesUnchanged = Number(data.pricesUnchanged) || 0;
+
+      if (matched > 0) {
         const pricesSyncedAt = data.pricesSyncedAt || data.syncedAt || new Date().toISOString();
         lastLocalPriceRefreshAtRef.current = Date.now();
-        setBaseRows((prev) => applyPriceUpdatesToRows(prev, data.priceUpdates));
-        setProductOverrides((prev) =>
-          reconcileDraftOverridesAfterPricePatch(baseRowsRef.current, data.priceUpdates, prev)
-        );
+
+        if (pricesUpdated > 0 && data.priceUpdates && Object.keys(data.priceUpdates).length > 0) {
+          const { rows: nextRows } = applyPriceUpdatesToRows(baseRowsRef.current, data.priceUpdates);
+          setBaseRows(nextRows);
+          setProductOverrides((prev) =>
+            reconcileDraftOverridesAfterPricePatch(baseRowsRef.current, data.priceUpdates, prev)
+          );
+        }
+
         setSyncedAt(data.syncedAt || pricesSyncedAt);
         setMeta((prev) => ({
           ...prev,
           pricesSyncedAt,
+          pricesLastUpdated: pricesUpdated,
+          pricesLastUnchanged: pricesUnchanged,
         }));
-        setCloudStatus(
-          `Цены WB обновлены · ${matched} из ${data.catalogTotal || baseRows.length} артикулов`
-        );
-        pushToCloudRef.current().catch(() => {});
-      } else if (matched === 0) {
-        setCloudStatus('WB Prices API не вернул цены — проверьте токен (Prices) и нажмите «Обновить цены»');
+
+        if (pricesUpdated > 0) {
+          setCloudStatus(
+            `Обновлено ${pricesUpdated} цен WB · проверено ${matched}` +
+              (pricesUnchanged > 0 ? ` · без изменений ${pricesUnchanged}` : '')
+          );
+          pushToCloudRef.current().catch(() => {});
+        } else {
+          setCloudStatus(
+            `Проверено ${matched} цен WB · без изменений` +
+              (pricesUnchanged > 0 ? ` (${pricesUnchanged})` : '')
+          );
+        }
+        return true;
       }
-      return matched > 0;
+
+      setCloudStatus('WB Prices API не вернул цены — проверьте токен (Prices) и нажмите «Обновить цены»');
+      return false;
     } catch (err) {
       setCloudStatus(`Не удалось обновить цены: ${err.message}`);
       return false;
@@ -1328,9 +1353,7 @@ export default function App() {
   useEffect(() => {
     if (cloudSyncing || cloudRefreshing || loading || enriching || priceRefreshing) return;
     if (!activeProfile?.token || !canSyncWb || !baseRows.length) return;
-
-    const pricesStale = isPriceDataStale(meta?.pricesSyncedAt);
-    if (priceRefreshStartedRef.current && !pricesStale) return;
+    if (priceRefreshStartedRef.current) return;
 
     priceRefreshStartedRef.current = true;
     refreshPrices().then((ok) => {
@@ -1345,7 +1368,6 @@ export default function App() {
     activeProfile?.token,
     canSyncWb,
     baseRows.length,
-    meta?.pricesSyncedAt,
     refreshPrices,
   ]);
 

@@ -51,6 +51,7 @@ export default async function handler(req, res) {
       mode,
       phase,
       wbCache,
+      rows: req.body?.rows || [],
       catalogCursor: req.body?.catalogCursor || null,
       catalogMaxPages: req.body?.catalogMaxPages,
       skipRealization: req.body?.skipRealization === true,
@@ -78,6 +79,9 @@ export default async function handler(req, res) {
         pricesSyncedAt: snapshot.pricesSyncedAt,
         priceUpdates: snapshot.priceUpdates,
         pricesMatched: snapshot.pricesMatched,
+        pricesUpdated: snapshot.pricesUpdated ?? 0,
+        pricesUnchanged: snapshot.pricesUnchanged ?? 0,
+        pricesMissing: snapshot.pricesMissing ?? 0,
         catalogTotal: snapshot.catalogTotal,
       });
     }

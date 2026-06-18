@@ -1,4 +1,33 @@
+import { vendorLookupKeys } from '../../../lib/unit-economics/vendor-key.js';
+
 export const OVERRIDE_FIELDS = ['packagingCost', 'processingCost', 'extraCosts', 'draftSalePrice'];
+
+function resolvePatchForRow(row, priceUpdates) {
+  const byNm = new Map();
+  const byVendor = new Map();
+  const entries =
+    priceUpdates instanceof Map ? [...priceUpdates.entries()] : Object.entries(priceUpdates || {});
+  for (const [key, patch] of entries) {
+    if (!patch) continue;
+    const raw = String(key);
+    if (raw.startsWith('v:')) {
+      byVendor.set(raw.slice(2), patch);
+      continue;
+    }
+    const nmId = Number(key);
+    if (nmId) byNm.set(nmId, patch);
+  }
+
+  const nmId = Number(row.nmId);
+  if (nmId && byNm.has(nmId)) return byNm.get(nmId);
+  const vendor = String(row.vendorCode || '').trim();
+  if (!vendor) return null;
+  if (byVendor.has(vendor)) return byVendor.get(vendor);
+  for (const key of vendorLookupKeys(vendor)) {
+    if (byVendor.has(key)) return byVendor.get(key);
+  }
+  return null;
+}
 
 export function getProductOverride(overrides, vendorCode) {
   if (!vendorCode) return {};
@@ -43,19 +72,9 @@ export function setProductOverride(overrides, vendorCode, field, value) {
 export function reconcileDraftOverridesAfterPricePatch(rows, priceUpdates, overrides = {}) {
   if (!rows?.length || !priceUpdates || !overrides) return overrides;
 
-  const byNm = new Map();
-  if (priceUpdates instanceof Map) {
-    for (const [nmId, patch] of priceUpdates) byNm.set(Number(nmId), patch);
-  } else {
-    for (const [nmId, patch] of Object.entries(priceUpdates)) {
-      if (patch) byNm.set(Number(nmId), patch);
-    }
-  }
-  if (!byNm.size) return overrides;
-
   let next = overrides;
   for (const row of rows) {
-    const patch = byNm.get(Number(row.nmId));
+    const patch = resolvePatchForRow(row, priceUpdates);
     if (!patch) continue;
 
     const vendor = String(row.vendorCode || '');
