@@ -153,13 +153,15 @@ export default function ApiKeyPanel({
                 {profile.name}
               </button>
               <span className="font-mono text-xs text-slate-500">{maskToken(profile.token)}</span>
-              <button
-                type="button"
-                className="text-xs text-rose-600 hover:underline"
-                onClick={(event) => removeProfile(profile.id, event)}
-              >
-                удалить
-              </button>
+              {profiles.length > 1 ? (
+                <button
+                  type="button"
+                  className="text-xs text-rose-600 hover:underline"
+                  onClick={(event) => removeProfile(profile.id, event)}
+                >
+                  удалить
+                </button>
+              ) : null}
             </div>
           ))}
         </div>

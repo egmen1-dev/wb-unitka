@@ -203,6 +203,7 @@ function mergeRowAdFields(prevRows, nextRows) {
 }
 
 function bootProfiles(bootPayload) {
+  const deletedIds = new Set(loadDeletedProfileIds());
   const teamProfiles = bootPayload?.profiles;
   const localProfiles = loadProfiles();
   let merged;
@@ -211,7 +212,8 @@ function bootProfiles(bootPayload) {
   } else {
     merged = [];
   }
-  return normalizeProfiles(merged).profiles;
+  return normalizeProfiles(merged)
+    .profiles.filter((profile) => !deletedIds.has(profile?.id));
 }
 
 function bootActiveProfileId(bootPayload, profiles) {
@@ -244,8 +246,9 @@ function applyWorkspacePayload(
         (id) => id && mergedProfiles.some((profile) => profile.id === id)
       ) || '';
     if (activeId) setters.setActiveProfileId(activeId);
-  } else if (Array.isArray(payload.profiles) && payload.profiles.length === 0) {
-    setters.setProfiles([]);
+    else if (!mergedProfiles.length) setters.setActiveProfileId('');
+  } else if (Array.isArray(payload.profiles)) {
+    setters.setProfiles(mergedProfiles);
     setters.setActiveProfileId('');
   }
 
@@ -1202,6 +1205,10 @@ export default function App() {
     async (id) => {
       const target = profiles.find((p) => p.id === id);
       if (!target) return;
+      if (profiles.length <= 1) {
+        setCloudStatus('Нельзя удалить единственный ключ — замените токен через «Заменить токен»');
+        return;
+      }
       if (!window.confirm(`Удалить ключ «${target.name}»?`)) return;
 
       deletedProfileIdsRef.current = addDeletedProfileId(id);
@@ -1215,11 +1222,34 @@ export default function App() {
 
       saveProfiles(nextProfiles);
       saveActiveProfileId(nextActive);
-      setCloudStatus(`Ключ «${target.name}» удалён`);
+      setCloudStatus('Профиль удалён');
 
       if (persistTimer.current) {
         clearTimeout(persistTimer.current);
         persistTimer.current = null;
+      }
+
+      if (team) {
+        const snapshotPayload = buildWorkspacePayload({
+          profiles: nextProfiles,
+          activeProfileId: nextActive,
+          purchases,
+          settings,
+          settingsUpdatedAt,
+          supplierCatalogs,
+          productOverrides,
+          baseRows,
+          meta,
+          syncedAt,
+          wbProductCache,
+          ownerClientId: ownerClientIdForPayload(ownerClientId),
+          teamAccess,
+        });
+        saveWorkspaceSnapshot(team, {
+          payload: snapshotPayload,
+          updatedAt: new Date().toISOString(),
+          name: teamName,
+        });
       }
 
       if (team && !skipCloudSave.current) {
@@ -1230,11 +1260,28 @@ export default function App() {
             nextProfiles.map((p) => p.id)
           );
         } catch (err) {
-          setCloudStatus(`Ключ удалён локально; облако: ${err.message}`);
+          setCloudStatus(`Профиль удалён локально; облако: ${err.message}`);
         }
       }
     },
-    [profiles, activeProfileId, team, pushToCloud]
+    [
+      profiles,
+      activeProfileId,
+      team,
+      teamName,
+      pushToCloud,
+      purchases,
+      settings,
+      settingsUpdatedAt,
+      supplierCatalogs,
+      productOverrides,
+      baseRows,
+      meta,
+      syncedAt,
+      wbProductCache,
+      ownerClientId,
+      teamAccess,
+    ]
   );
 
   useEffect(() => {
@@ -1568,6 +1615,14 @@ export default function App() {
       }
     >
       <UpdateBanner />
+      {cloudStatus ? (
+        <div
+          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800 shadow-lg"
+          role="status"
+        >
+          {cloudStatus}
+        </div>
+      ) : null}
       {teamUrlMissing ? <TeamUrlBanner teamCode={team} onRestore={handleRestoreTeamUrl} /> : null}
       {error ? (
         <WbTokenBanner message={error} onOpenData={() => changeSection('data')} />
