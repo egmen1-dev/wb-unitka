@@ -48,5 +48,11 @@ if (jsonOnly || !sheetId) {
 }
 
 console.log(`Запись в Google Таблицу ${sheetId}...`);
-const result = await pushWbDataToGoogleSheet(sheetId, snapshot);
-console.log(`Готово: обновлено ${result.updatedRows} строк, закупки не тронуты.`);
+try {
+  const result = await pushWbDataToGoogleSheet(sheetId, snapshot);
+  console.log(`Готово: обновлено ${result.updatedRows} строк, закупки не тронуты.`);
+} catch (error) {
+  console.error(`\nНе удалось записать в Google Таблицу: ${error.message}`);
+  console.error('Снимок WB сохранён в cache/wb-snapshot.json — веб-калькулятор от этого не зависит.');
+  process.exit(1);
+}
