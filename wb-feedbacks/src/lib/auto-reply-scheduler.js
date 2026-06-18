@@ -1,5 +1,5 @@
 import { AUTO_REPLY_INTERVAL_MS, AUTO_REPLY_MAX_PER_HOUR, isDraftSafeForAutoSend } from '@lib/feedback-auto-reply.js';
-import { fetchWithTimeout, readJsonResponse } from './http';
+import { DRAFT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from './http';
 import {
   getFeedbacksReadRateLimitSecondsLeft,
   isFeedbacksReadRateLimited,
@@ -117,19 +117,24 @@ function pickNextFeedback(feedbacks, skippedIds) {
 
 async function requestDraft(token, feedback, { regenerate = false } = {}) {
   const variationSeed = Date.now() + Math.floor(Math.random() * 10_000);
-  const response = await fetchWithTimeout('/api/feedbacks/feedback-draft', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
+  const response = await fetchWithTimeout(
+    '/api/feedbacks/feedback-draft',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        feedback,
+        catalogRows: [],
+        regenerate,
+        variationSeed,
+        autoReply: true,
+      }),
     },
-    body: JSON.stringify({
-      feedback,
-      catalogRows: [],
-      regenerate,
-      variationSeed,
-    }),
-  });
+    DRAFT_FETCH_TIMEOUT_MS
+  );
   const { data: payload } = await readJsonResponse(response);
   if (!response.ok) {
     const err = new Error(payload?.error || 'Не удалось сгенерировать ответ');
@@ -210,8 +215,17 @@ export function createAutoReplyScheduler({
   let timer = null;
   let stopped = false;
   const skippedIds = new Set();
+  let lastPhase = 'idle';
+  let lastStatus = '';
+
+  function formatDraftError(err) {
+    const parts = [err?.message, err?.payload?.hint, err?.payload?.error].filter(Boolean);
+    return parts.length ? parts.join(' — ') : 'Ошибка генерации';
+  }
 
   function emit(patch = {}) {
+    if (patch.phase !== undefined) lastPhase = patch.phase;
+    if (patch.status !== undefined) lastStatus = patch.status;
     onState?.({
       enabled,
       running,
@@ -219,7 +233,8 @@ export function createAutoReplyScheduler({
       sentThisHour: getSentThisHour(),
       nextInMs: getMsUntilNextSlot(),
       log: getAutoReplyLog(),
-      phase: 'idle',
+      phase: lastPhase,
+      status: lastStatus,
       ...patch,
     });
   }
@@ -274,7 +289,11 @@ export function createAutoReplyScheduler({
 
       return { payload, retried: true, skipReason: check.reason };
     } catch (err) {
-      return { error: err.message || 'Ошибка генерации', payload: err.payload, status: err.status };
+      return {
+        error: formatDraftError(err),
+        payload: err.payload,
+        status: err.status,
+      };
     }
   }
 
@@ -432,7 +451,7 @@ export function createAutoReplyScheduler({
       scheduleNext(AUTO_REPLY_INTERVAL_MS);
     } catch (err) {
       posting = false;
-      const reason = err.message || 'Ошибка';
+      const reason = [err.message, err.payload?.hint].filter(Boolean).join(' — ') || 'Ошибка';
       const isRate = isRateLimitError(err);
       const fb = currentFeedback;
       appendLog({

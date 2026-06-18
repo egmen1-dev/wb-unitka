@@ -11,7 +11,7 @@ import {
   saveAutoReplyEnabled,
 } from '../lib/auto-reply-scheduler';
 import { fmtMoney } from '../lib/format';
-import { DEFAULT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from '../lib/http';
+import { DEFAULT_FETCH_TIMEOUT_MS, DRAFT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from '../lib/http';
 import { fetchFeedbacksApi, isRateLimitError } from '../lib/wb-api-queue';
 import { EXPECTED_PROMPT_VERSION, PROMPT_BADGE_LABEL } from '../lib/prompt-meta';
 import {
@@ -863,19 +863,23 @@ export default function FeedbacksPanel({ token }) {
       setError('');
       const variationSeed = Date.now() + Math.floor(Math.random() * 10000);
       try {
-        const response = await fetchWithTimeout('/api/feedbacks/feedback-draft', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        const response = await fetchWithTimeout(
+          '/api/feedbacks/feedback-draft',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              feedback,
+              catalogRows: [],
+              regenerate,
+              variationSeed,
+            }),
           },
-          body: JSON.stringify({
-            feedback,
-            catalogRows: [],
-            regenerate,
-            variationSeed,
-          }),
-        });
+          DRAFT_FETCH_TIMEOUT_MS
+        );
         const { data: payload } = await readJsonResponse(response);
         if (!response.ok) throw new Error(payload.error || 'Не удалось сгенерировать ответ');
 

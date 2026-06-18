@@ -21,6 +21,8 @@ import { completeYandexGpt, pickYandexModel, readYandexConfig } from '../../lib/
 import { serializeFeedback } from '../../lib/wb-feedbacks.js';
 
 const MAX_QUALITY_RETRIES = 3;
+const AUTO_REPLY_QUALITY_RETRIES = 1;
+const AUTO_REPLY_YANDEX_TIMEOUT_MS = 28_000;
 const QUALITY_ERROR = 'Не удалось сгенерировать качественный ответ. Попробуйте перегенерировать.';
 
 function readToken(req) {
@@ -120,14 +122,15 @@ async function generateWithOpenAI(userPrompt, systemPrompt, apiKey, { regenerate
   return draft;
 }
 
-async function generateWithYandex(userPrompt, systemPrompt, { regenerate = false, reviewLength = 0 } = {}) {
+async function generateWithYandex(userPrompt, systemPrompt, { regenerate = false, reviewLength = 0, autoReply = false } = {}) {
   const temperature = regenerate ? 0.85 : 0.8;
-  const model = pickYandexModel(reviewLength);
+  const model = autoReply ? 'yandexgpt-lite' : pickYandexModel(reviewLength);
   const opts = {
     system: systemPrompt,
     user: userPrompt,
     temperature,
-    maxTokens: 550,
+    maxTokens: autoReply ? 450 : 550,
+    timeoutMs: autoReply ? AUTO_REPLY_YANDEX_TIMEOUT_MS : undefined,
   };
   try {
     const { text } = await completeYandexGpt({ ...opts, model });
@@ -153,10 +156,15 @@ async function callAiProvider({
   systemPrompt,
   regenerate,
   reviewLength,
+  autoReply = false,
 }) {
   if (yandexConfigured) {
     try {
-      const draft = await generateWithYandex(userPrompt, systemPrompt, { regenerate, reviewLength });
+      const draft = await generateWithYandex(userPrompt, systemPrompt, {
+        regenerate,
+        reviewLength,
+        autoReply,
+      });
       return { draft, provider: 'yandex', source: regenerate ? 'yandex-regen' : 'yandex' };
     } catch (error) {
       console.error('[feedbacks/feedback-draft] YandexGPT', error);
@@ -182,14 +190,16 @@ async function generateDraftWithQuality({
   regenerate,
   reviewLength,
   qualityContext,
+  autoReply = false,
 }) {
   let draft;
   let source;
   let provider;
   let qualityRetried = 0;
   let activeSystemPrompt = systemPrompt;
+  const maxRetries = autoReply ? AUTO_REPLY_QUALITY_RETRIES : MAX_QUALITY_RETRIES;
 
-  for (let attempt = 0; attempt <= MAX_QUALITY_RETRIES; attempt += 1) {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const isRetry = attempt > 0;
     const aiResult = await callAiProvider({
       yandexConfigured,
@@ -198,6 +208,7 @@ async function generateDraftWithQuality({
       systemPrompt: activeSystemPrompt,
       regenerate: isRetry || regenerate,
       reviewLength,
+      autoReply,
     });
 
     if (!aiResult) {
@@ -213,9 +224,9 @@ async function generateDraftWithQuality({
       return { draft, source, provider, quality, qualityRetried };
     }
 
-    if (attempt < MAX_QUALITY_RETRIES) {
+    if (attempt < maxRetries) {
       qualityRetried += 1;
-      activeSystemPrompt = `${systemPrompt}\n\nПРЕДЫДУЩИЙ ОТВЕТ ОТКЛОНЁН (попытка ${attempt + 1}/${MAX_QUALITY_RETRIES}): ${quality.issues.join('; ')}. Перепиши полностью, исправь все замечания. Не используй шаблонные фразы.`;
+      activeSystemPrompt = `${systemPrompt}\n\nПРЕДЫДУЩИЙ ОТВЕТ ОТКЛОНЁН (попытка ${attempt + 1}/${maxRetries}): ${quality.issues.join('; ')}. Перепиши полностью, исправь все замечания. Не используй шаблонные фразы.`;
       console.warn('[feedbacks/feedback-draft] quality retry', attempt + 1, quality.issues);
     } else {
       const err = new Error(QUALITY_ERROR);
@@ -251,6 +262,7 @@ export default async function handler(req, res) {
   }
 
   const regenerate = req.body?.regenerate === true;
+  const autoReply = req.body?.autoReply === true;
   const variationSeed =
     req.body?.variationSeed != null
       ? Number(req.body.variationSeed) || Date.now()
@@ -260,7 +272,11 @@ export default async function handler(req, res) {
 
   const catalogRows = Array.isArray(req.body?.catalogRows) ? req.body.catalogRows : [];
   const row = findCatalogRow(catalogRows, feedback);
-  const product = await enrichProductFromContent(token, row, feedback);
+  const product = autoReply
+    ? catalogRowToProductContext(row, {
+        description: row?.title || feedback?.productName || '',
+      })
+    : await enrichProductFromContent(token, row, feedback);
   const rating = Number(feedback?.rating) || 0;
   const alternative = pickAlternativeProduct(catalogRows, feedback, feedback.nmId);
   const premiumUpsell = rating >= 4 ? pickPremiumUpsell(catalogRows, feedback.nmId) : null;
@@ -338,6 +354,7 @@ export default async function handler(req, res) {
         regenerate,
         reviewLength,
         qualityContext,
+        autoReply,
       });
       draft = result.draft;
       source = result.source;

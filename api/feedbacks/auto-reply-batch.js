@@ -28,7 +28,7 @@ function callDraftHandler(feedback, token, { regenerate = false } = {}) {
     const fakeReq = {
       method: 'POST',
       headers: { authorization: `Bearer ${token}` },
-      body: { feedback, catalogRows: [], regenerate, variationSeed },
+      body: { feedback, catalogRows: [], regenerate, variationSeed, autoReply: true },
     };
     const fakeRes = {
       statusCode: 200,

@@ -1,4 +1,6 @@
 export const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+/** YandexGPT draft generation on Vercel often needs 60–90s. */
+export const DRAFT_FETCH_TIMEOUT_MS = 95_000;
 
 export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -18,8 +20,9 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FE
   } catch (err) {
     if (err?.name === 'AbortError') {
       const timedOut = !externalSignal?.aborted;
+      const sec = Math.round(timeoutMs / 1000);
       throw new Error(
-        timedOut ? 'Запрос не ответил за 30 сек — попробуйте ещё раз' : 'Запрос отменён'
+        timedOut ? `Запрос не ответил за ${sec} сек — попробуйте ещё раз` : 'Запрос отменён'
       );
     }
     throw err;
