@@ -12,6 +12,7 @@ import {
 } from '../lib/auto-reply-scheduler';
 import { fmtMoney } from '../lib/format';
 import { DEFAULT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from '../lib/http';
+import { fetchFeedbacksApi, isRateLimitError } from '../lib/wb-api-queue';
 import { EXPECTED_PROMPT_VERSION, PROMPT_BADGE_LABEL } from '../lib/prompt-meta';
 import {
   clearFeedbacksRateLimit,
@@ -506,7 +507,7 @@ export default function FeedbacksPanel({ token }) {
   const hasDataRef = useRef(false);
   const dataRef = useRef(null);
   const loadInFlightRef = useRef(false);
-  const autoRetryTimerRef = useRef(null);
+  const pendingRefreshRef = useRef(false);
   const abortRef = useRef(null);
   const aiCheckStartedRef = useRef(false);
   const loadingWatchdogRef = useRef(null);
@@ -561,11 +562,16 @@ export default function FeedbacksPanel({ token }) {
         return;
       }
 
-      const showRateLimit = (sec) => {
+      const showRateLimit = (sec, { queued = false } = {}) => {
         setFeedbacksRateLimited(sec);
         setRateLimitCountdown(sec);
         restoreCachedList({ stale: true });
-        setError(`Подождите ${sec} сек`);
+        if (queued) {
+          setStatus(`Обновление через ${sec} сек…`);
+          setError('');
+        } else {
+          setError(`Подождите ${sec} сек — повтор автоматически…`);
+        }
       };
 
       if (force && !append) {
@@ -573,7 +579,8 @@ export default function FeedbacksPanel({ token }) {
         if (isFeedbacksRateLimited() && !isRetry) {
           const sec = getFeedbacksRateLimitSecondsLeft();
           if (sec > 0) {
-            showRateLimit(sec);
+            pendingRefreshRef.current = true;
+            showRateLimit(sec, { queued: true });
             return;
           }
           clearFeedbacksRateLimit();
@@ -587,7 +594,8 @@ export default function FeedbacksPanel({ token }) {
 
       if (!force && !isRetry && !append && isFeedbacksRateLimited()) {
         const sec = getFeedbacksRateLimitSecondsLeft();
-        showRateLimit(sec);
+        pendingRefreshRef.current = true;
+        showRateLimit(sec, { queued: true });
         return;
       }
 
@@ -608,7 +616,7 @@ export default function FeedbacksPanel({ token }) {
       if (!isRetry && !append) setError('');
       if ((!cachedCount || force) && !append) setStatus('');
       try {
-        const response = await fetchWithTimeout(
+        const { response, payload } = await fetchFeedbacksApi(
           '/api/feedbacks/feedbacks',
           {
             method: 'POST',
@@ -619,30 +627,9 @@ export default function FeedbacksPanel({ token }) {
             body: JSON.stringify({ action: 'list', take: PAGE_SIZE, skip }),
             signal: abortRef.current?.signal,
           },
-          LOADING_WATCHDOG_MS
+          { timeoutMs: LOADING_WATCHDOG_MS }
         );
-        const { data: payload } = await readJsonResponse(response);
         if (!response.ok) {
-          if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
-            const sec = Number(payload?.retryAfterSec) || 5;
-            if (!isRetry && loadAttemptRef.current < 1) {
-              loadAttemptRef.current += 1;
-              showRateLimit(sec);
-              if (append) setLoadingMore(false);
-              else {
-                setLoading(false);
-                loadInFlightRef.current = false;
-                clearLoadingWatchdog();
-              }
-              await new Promise((resolve) => {
-                autoRetryTimerRef.current = setTimeout(resolve, sec * 1000);
-              });
-              clearFeedbacksRateLimit();
-              return loadFeedbacks({ force: true, isRetry: true, append, skip });
-            }
-            showRateLimit(sec);
-            return;
-          }
           throw new Error(formatApiError(payload, response.status));
         }
         clearFeedbacksRateLimit();
@@ -672,6 +659,12 @@ export default function FeedbacksPanel({ token }) {
       } catch (err) {
         if (err?.message === 'Запрос отменён') return;
         restoreCachedList({ stale: true });
+        if (isRateLimitError(err)) {
+          const sec = Number(err.retryAfterSec) || getFeedbacksRateLimitSecondsLeft() || 5;
+          pendingRefreshRef.current = true;
+          showRateLimit(sec, { queued: true });
+          return;
+        }
         setError(err.message || 'Ошибка загрузки');
       } finally {
         if (append) setLoadingMore(false);
@@ -700,8 +693,20 @@ export default function FeedbacksPanel({ token }) {
 
   const handleRefresh = useCallback(() => {
     if (loadInFlightRef.current) return;
+    if (isFeedbacksRateLimited()) {
+      const sec = getFeedbacksRateLimitSecondsLeft();
+      if (sec > 0) {
+        pendingRefreshRef.current = true;
+        setRateLimitCountdown(sec);
+        setStatus(`Обновление через ${sec} сек…`);
+        setError('');
+        restoreCachedList({ stale: true });
+        return;
+      }
+    }
+    pendingRefreshRef.current = false;
     loadFeedbacks({ force: true });
-  }, [loadFeedbacks]);
+  }, [loadFeedbacks, restoreCachedList]);
 
   useEffect(() => {
     if (!token) {
@@ -747,23 +752,35 @@ export default function FeedbacksPanel({ token }) {
   }, [token]);
 
   useEffect(() => {
-    if (rateLimitCountdown <= 0) return undefined;
+    if (rateLimitCountdown <= 0) {
+      if (pendingRefreshRef.current) {
+        pendingRefreshRef.current = false;
+        loadFeedbacks({ force: true });
+      }
+      return undefined;
+    }
     const timer = setInterval(() => {
       const left = getFeedbacksRateLimitSecondsLeft();
       setRateLimitCountdown(left);
       if (left <= 0) {
         clearFeedbacksRateLimit();
         setError((prev) => (prev.startsWith('Подождите') ? '' : prev));
+        if (pendingRefreshRef.current) {
+          pendingRefreshRef.current = false;
+          loadFeedbacks({ force: true });
+        }
+      } else if (pendingRefreshRef.current) {
+        setStatus(`Обновление через ${left} сек…`);
+        setError('');
       } else {
-        setError(`Подождите ${left} сек`);
+        setError(`Подождите ${left} сек — повтор автоматически…`);
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [rateLimitCountdown]);
+  }, [rateLimitCountdown, loadFeedbacks]);
 
   useEffect(
     () => () => {
-      if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
       abortRef.current?.abort();
       clearLoadingWatchdog();
     },
@@ -863,7 +880,7 @@ export default function FeedbacksPanel({ token }) {
       setSendingId(feedback.id);
       setError('');
       try {
-        const response = await fetchWithTimeout('/api/feedbacks/feedbacks', {
+        const { response, payload } = await fetchFeedbacksApi('/api/feedbacks/feedbacks', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -875,15 +892,7 @@ export default function FeedbacksPanel({ token }) {
             text: draft,
           }),
         });
-        const { data: payload } = await readJsonResponse(response);
         if (!response.ok) {
-          if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
-            const sec = Number(payload?.retryAfterSec) || 5;
-            setFeedbacksRateLimited(sec);
-            setRateLimitCountdown(sec);
-            restoreCachedList({ stale: true });
-            throw new Error(`Подождите ${sec} сек`);
-          }
           throw new Error(payload.error || 'Не удалось отправить ответ');
         }
 
@@ -896,7 +905,14 @@ export default function FeedbacksPanel({ token }) {
         });
         await loadFeedbacks({ force: true });
       } catch (err) {
-        setError(err.message || 'Ошибка отправки');
+        if (isRateLimitError(err)) {
+          const sec = Number(err.retryAfterSec) || getFeedbacksRateLimitSecondsLeft() || 5;
+          setRateLimitCountdown(sec);
+          restoreCachedList({ stale: true });
+          setError(`Подождите ${sec} сек — отправка повторится при следующей попытке`);
+        } else {
+          setError(err.message || 'Ошибка отправки');
+        }
       } finally {
         setSendingId(null);
       }
@@ -1001,7 +1017,11 @@ export default function FeedbacksPanel({ token }) {
             disabled={loading || loadingMore}
             onClick={handleRefresh}
           >
-            {loading ? 'Загрузка…' : 'Обновить'}
+            {loading
+              ? 'Загрузка…'
+              : rateLimitCountdown > 0
+                ? `Обновить (${rateLimitCountdown}с)`
+                : 'Обновить'}
           </button>
         </div>
 

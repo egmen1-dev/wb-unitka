@@ -1,5 +1,7 @@
 import { AUTO_REPLY_INTERVAL_MS, AUTO_REPLY_MAX_PER_HOUR, isDraftSafeForAutoSend } from '@lib/feedback-auto-reply.js';
 import { fetchWithTimeout, readJsonResponse } from './http';
+import { isFeedbacksRateLimited, getFeedbacksRateLimitSecondsLeft } from './feedbacks-cache';
+import { fetchFeedbacksApi, isRateLimitError } from './wb-api-queue';
 
 export { AUTO_REPLY_INTERVAL_MS, AUTO_REPLY_MAX_PER_HOUR, isDraftSafeForAutoSend };
 const HOUR_MS = 3_600_000;
@@ -117,7 +119,7 @@ async function requestDraft(token, feedback, { regenerate = false } = {}) {
 }
 
 async function postAnswer(token, feedbackId, text) {
-  const response = await fetchWithTimeout('/api/feedbacks/feedbacks', {
+  const { response, payload } = await fetchFeedbacksApi('/api/feedbacks/feedbacks', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -129,7 +131,6 @@ async function postAnswer(token, feedbackId, text) {
       text,
     }),
   });
-  const { data: payload } = await readJsonResponse(response);
   if (!response.ok) {
     const err = new Error(payload?.error || 'Не удалось отправить ответ');
     err.status = response.status;
@@ -140,7 +141,7 @@ async function postAnswer(token, feedbackId, text) {
 }
 
 async function fetchUnanswered(token, take = 20) {
-  const response = await fetchWithTimeout('/api/feedbacks/feedbacks', {
+  const { response, payload } = await fetchFeedbacksApi('/api/feedbacks/feedbacks', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -148,7 +149,6 @@ async function fetchUnanswered(token, take = 20) {
     },
     body: JSON.stringify({ action: 'list', take, skip: 0 }),
   });
-  const { data: payload } = await readJsonResponse(response);
   if (!response.ok) throw new Error(payload?.error || 'Не удалось загрузить отзывы');
   return payload.feedbacks || [];
 }
@@ -218,6 +218,15 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
     if (waitMs > 0) {
       scheduleNext(waitMs);
       return;
+    }
+
+    if (isFeedbacksRateLimited()) {
+      const rateWait = getFeedbacksRateLimitSecondsLeft() * 1000;
+      if (rateWait > 0) {
+        emit({ status: `лимит WB · ${Math.ceil(rateWait / 1000)} сек` });
+        scheduleNext(rateWait);
+        return;
+      }
     }
 
     if (getSentThisHour() >= AUTO_REPLY_MAX_PER_HOUR) {
@@ -292,7 +301,10 @@ export function createAutoReplyScheduler({ token, getFeedbacks, onState, onAfter
       });
       emit({ status: `ошибка · ${reason}` });
 
-      const retryAfterSec = Number(err.payload?.retryAfterSec) || 0;
+      const retryAfterSec =
+        Number(err.payload?.retryAfterSec) ||
+        (isRateLimitError(err) ? Number(err.retryAfterSec) : 0) ||
+        0;
       const backoff = retryAfterSec > 0 ? retryAfterSec * 1000 : AUTO_REPLY_INTERVAL_MS;
       scheduleNext(backoff);
     } finally {
