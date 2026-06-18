@@ -5,10 +5,12 @@ import { primaryMargin, primaryProfit, resolveScheme, schemeLabel } from '@lib/u
 import { collectBrandOptions, filterRowsByBrand } from '../lib/brand-filter';
 import {
   MARGIN_BUCKETS,
+  EMPTY_BUCKET_STATS,
   buildMarginBucketStats,
   diagnoseRow,
   topRiskRows,
 } from '../lib/margin-insights';
+import { normalizeBrandFilter } from '../lib/brand-filter';
 
 function SummaryDashboard({
   rows,
@@ -25,7 +27,11 @@ function SummaryDashboard({
   const scheme = resolveScheme(settings);
   const label = schemeLabel(scheme);
 
-  const visibleRows = useMemo(() => filterRowsByBrand(rows, brandFilter), [rows, brandFilter]);
+  const activeBrandFilter = normalizeBrandFilter(brandFilter);
+  const visibleRows = useMemo(
+    () => filterRowsByBrand(rows, activeBrandFilter),
+    [rows, activeBrandFilter]
+  );
 
   const stats = useMemo(() => {
     const withData = visibleRows.filter((r) => r.salePrice > 0 && primaryProfit(r, scheme) != null);
@@ -54,7 +60,7 @@ function SummaryDashboard({
         sumProfit,
         avgMargin,
         missingPurchase,
-        bucketStats: { eligible: [] },
+        bucketStats: EMPTY_BUCKET_STATS,
         risks: [],
         logisticsBrief: { withActual: 0, okPct: 0 },
       };
@@ -92,9 +98,15 @@ function SummaryDashboard({
 
   function handleBrandClick(name) {
     if (!onBrandFilter) return;
-    const selected = brandFilter || [];
+    const selected = activeBrandFilter;
     onBrandFilter(selected.includes(name) ? selected.filter((item) => item !== name) : [...selected, name]);
   }
+
+  const bucketStats = stats.bucketStats || EMPTY_BUCKET_STATS;
+  const bucketCounts = bucketStats.counts || EMPTY_BUCKET_STATS.counts;
+  const eligibleCount = bucketStats.eligible?.length ?? 0;
+  const bucketMax = bucketStats.max > 0 ? bucketStats.max : 1;
+  const acquiringPct = meta?.globalAcquiringRate ?? settings?.acquiringRate ?? 0;
 
   return (
     <section
@@ -147,9 +159,9 @@ function SummaryDashboard({
             {stats.missingPurchase > 0 ? (
               <span className="text-amber-700">без закупки: {stats.missingPurchase}</span>
             ) : null}
-            {brandFilter.length ? (
+            {activeBrandFilter.length ? (
               <span className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-800 ring-1 ring-brand-200">
-                бренд: {brandFilter.length === 1 ? brandFilter[0] : `${brandFilter.length} шт.`}
+                бренд: {activeBrandFilter.length === 1 ? activeBrandFilter[0] : `${activeBrandFilter.length} шт.`}
               </span>
             ) : null}
           </div>
@@ -201,7 +213,7 @@ function SummaryDashboard({
                   <h3 className="text-sm font-semibold text-slate-800">Бренды</h3>
                   <p className="mt-0.5 text-xs text-slate-500">Клик — фильтр в таблице и сводке</p>
                 </div>
-                {brandFilter.length ? (
+                {activeBrandFilter.length ? (
                   <button
                     type="button"
                     className="text-xs text-brand-700 underline"
@@ -213,7 +225,7 @@ function SummaryDashboard({
               </div>
               <div className="flex flex-wrap gap-2">
                 {brandOptions.map((opt) => {
-                  const active = brandFilter.includes(opt.name);
+                  const active = activeBrandFilter.includes(opt.name);
                   return (
                     <button
                       key={opt.name}
@@ -253,11 +265,17 @@ function SummaryDashboard({
                 </button>
               </div>
 
+              {eligibleCount === 0 ? (
+                <p className="text-sm text-slate-500">
+                  Нет позиций с закупкой и ценой для диаграммы маржи по выбранному фильтру.
+                </p>
+              ) : (
+                <>
               <div className="mb-4 flex h-3 overflow-hidden rounded-full bg-slate-200">
                 {MARGIN_BUCKETS.map((bucket) => {
-                  const count = stats.bucketStats.counts[bucket.id] || 0;
+                  const count = bucketCounts[bucket.id] || 0;
                   if (!count) return null;
-                  const pct = (count / stats.bucketStats.eligible.length) * 100;
+                  const pct = (count / eligibleCount) * 100;
                   return (
                     <button
                       key={bucket.id}
@@ -275,8 +293,8 @@ function SummaryDashboard({
 
               <div className="space-y-2">
                 {MARGIN_BUCKETS.map((bucket) => {
-                  const count = stats.bucketStats.counts[bucket.id] || 0;
-                  const width = (count / stats.bucketStats.max) * 100;
+                  const count = bucketCounts[bucket.id] || 0;
+                  const width = (count / bucketMax) * 100;
                   const active = marginFilter === bucket.id;
 
                   return (
@@ -307,6 +325,8 @@ function SummaryDashboard({
                   );
                 })}
               </div>
+                </>
+              )}
 
               <button
                 type="button"
@@ -376,7 +396,7 @@ function SummaryDashboard({
           <p className="text-xs text-slate-500">
             {meta?.globalAcquiringRate
               ? `Эквайринг: ${(meta.globalAcquiringRate * 100).toFixed(2)}%`
-              : `Эквайринг: ${(settings.acquiringRate * 100).toFixed(2)}%`}
+              : `Эквайринг: ${(acquiringPct * 100).toFixed(2)}%`}
             {meta?.sellerAvgDeliveryHours
               ? ` · ср. доставка ${Number(meta.sellerAvgDeliveryHours).toFixed(1)} ч`
               : ''}
@@ -425,7 +445,7 @@ function SummaryDashboard({
             ) : null}
             {meta?.fbsShipmentError ? ` · FBS склады: ${meta.fbsShipmentError}` : ''}
             {' · '}
-            {stats.bucketStats.eligible.length} позиций в диаграмме (с закупкой и ценой)
+            {eligibleCount} позиций в диаграмме (с закупкой и ценой)
           </p>
         </div>
       ) : null}

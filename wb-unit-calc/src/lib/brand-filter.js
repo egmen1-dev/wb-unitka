@@ -1,3 +1,8 @@
+export function normalizeBrandFilter(selectedBrands) {
+  if (!Array.isArray(selectedBrands)) return [];
+  return selectedBrands.filter((name) => name != null && String(name).trim() !== '');
+}
+
 export function normalizeBrandName(brand) {
   const name = String(brand ?? '').trim();
   return name || '—';
@@ -15,11 +20,13 @@ export function collectBrandOptions(rows) {
 }
 
 export function rowMatchesBrandFilter(row, selectedBrands) {
-  if (!selectedBrands?.length) return true;
-  return selectedBrands.includes(normalizeBrandName(row.brand));
+  const selected = normalizeBrandFilter(selectedBrands);
+  if (!selected.length) return true;
+  return selected.includes(normalizeBrandName(row.brand));
 }
 
 export function filterRowsByBrand(rows, selectedBrands) {
-  if (!selectedBrands?.length) return rows || [];
-  return (rows || []).filter((row) => rowMatchesBrandFilter(row, selectedBrands));
+  const selected = normalizeBrandFilter(selectedBrands);
+  if (!selected.length) return rows || [];
+  return (rows || []).filter((row) => rowMatchesBrandFilter(row, selected));
 }

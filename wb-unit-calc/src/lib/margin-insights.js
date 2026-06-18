@@ -23,6 +23,12 @@ export const MARGIN_BUCKETS = [
   { id: 'high', label: 'Хорошая', hint: '> 30%', min: 0.3, max: Infinity, color: '#059669' },
 ];
 
+export const EMPTY_BUCKET_STATS = {
+  eligible: [],
+  counts: Object.fromEntries(MARGIN_BUCKETS.map((b) => [b.id, 0])),
+  max: 1,
+};
+
 export function isRowWithMarginData(row, scheme = DEFAULT_SCHEME) {
   return row.salePrice > 0 && row.purchasePrice > 0 && primaryMargin(row, scheme) != null;
 }
@@ -72,7 +78,9 @@ export function diagnoseRow(row, settings = {}) {
 
   if (sale > 0 && logistics / sale > 0.22) tips.push(`Дорогая логистика ${scheme.toUpperCase()}`);
   if (sale > 0 && commission / sale > 0.28) tips.push('Высокая комиссия');
-  if (row.advertisingRub > 0 && profit < row.advertisingRub) tips.push('Реклама съедает прибыль');
+  if (row.advertisingRub > 0 && profit != null && profit < row.advertisingRub) {
+    tips.push('Реклама съедает прибыль');
+  }
   if (margin != null && margin < 0) tips.push('Убыточная позиция');
   else if (margin != null && margin < MARGIN_LOW_THRESHOLD) tips.push('Маржа ниже 5%');
 
@@ -86,7 +94,7 @@ export function topRiskRows(rows, limit = 8, scheme = DEFAULT_SCHEME) {
     .sort(
       (a, b) =>
         primaryMargin(a, scheme) - primaryMargin(b, scheme) ||
-        primaryProfit(a, scheme) - primaryProfit(b, scheme)
+        (primaryProfit(a, scheme) ?? 0) - (primaryProfit(b, scheme) ?? 0)
     )
     .slice(0, limit);
 }

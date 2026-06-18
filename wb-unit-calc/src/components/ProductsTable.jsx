@@ -4,7 +4,7 @@ import { useVirtualRows } from '../lib/use-virtual-rows';
 import { fmtMoney, fmtNum, fmtPct, marginClass, profitClass } from '../lib/format';
 import { primaryProfit, resolveScheme } from '@lib/unit-scheme.js';
 import { getProductOverride } from '../lib/product-overrides';
-import { rowMatchesBrandFilter } from '../lib/brand-filter';
+import { rowMatchesBrandFilter, normalizeBrandFilter } from '../lib/brand-filter';
 import { rowMatchesProductSearch } from '../lib/product-search';
 import { MARGIN_BUCKETS, rowMatchesMarginFilter } from '../lib/margin-insights';
 import BrandFilter from './BrandFilter';
@@ -195,6 +195,7 @@ function logisticsTitle(row, mode) {
 }
 
 function fbsCommissionTitle(row) {
+  if (row.fbsCategoryRate == null) return 'Комиссия FBS не рассчитана';
   const baseRate = row.fbsCategoryRate - (row.fbsDeliverySurcharge || 0);
   const parts = [`кат. ${fmtPct(baseRate)} (WB)`];
   if (row.fbsDeliverySurcharge > 0) {
@@ -206,8 +207,12 @@ function fbsCommissionTitle(row) {
   ) {
     parts.push(`факт WB ${fmtNum(row.fbsAvgDeliveryHoursReport, 1)}ч`);
   }
-  parts.push(`+ ${fmtPct(row.fboTotalRate - row.fboCategoryRate)} доп.`);
-  parts.push(`= ${fmtPct(row.fbsTotalRate)} итог`);
+  if (row.fboTotalRate != null && row.fboCategoryRate != null) {
+    parts.push(`+ ${fmtPct(row.fboTotalRate - row.fboCategoryRate)} доп.`);
+  }
+  if (row.fbsTotalRate != null) {
+    parts.push(`= ${fmtPct(row.fbsTotalRate)} итог`);
+  }
   return parts.join(' · ');
 }
 
@@ -297,13 +302,15 @@ function ProductsTable({
     return MARGIN_BUCKETS.find((b) => b.id === marginFilter)?.label || marginFilter;
   }, [marginFilter]);
 
+  const activeBrandFilter = normalizeBrandFilter(brandFilter);
+
   const filtered = useMemo(() => {
     const q = query.trim();
     let list = rows.filter((row) => {
       if (q && !rowMatchesProductSearch(row, q)) return false;
       if (onlyWithPurchase && !row.purchasePrice) return false;
       if (onlyProfitable && !(primaryProfit(row, scheme) > 0)) return false;
-      if (!rowMatchesBrandFilter(row, brandFilter)) return false;
+      if (!rowMatchesBrandFilter(row, activeBrandFilter)) return false;
       if (!rowMatchesMarginFilter(row, marginFilter, scheme)) return false;
       return true;
     });
@@ -323,7 +330,7 @@ function ProductsTable({
     }
 
     return list;
-  }, [rows, query, onlyWithPurchase, onlyProfitable, brandFilter, marginFilter, sortKey, sortDir, scheme]);
+  }, [rows, query, onlyWithPurchase, onlyProfitable, activeBrandFilter, marginFilter, sortKey, sortDir, scheme]);
 
   useScrollRestore(tableRef, 'wb-unit-calc:scroll:calc', rows.length > 0);
 
@@ -344,13 +351,13 @@ function ProductsTable({
     () =>
       [
         query.trim().toLowerCase(),
-        brandFilter.join('\u0001'),
+        activeBrandFilter.join('\u0001'),
         marginFilter || '',
         onlyWithPurchase ? '1' : '0',
         onlyProfitable ? '1' : '0',
         filtered.length,
       ].join('|'),
-    [query, brandFilter, marginFilter, onlyWithPurchase, onlyProfitable, filtered.length]
+    [query, activeBrandFilter, marginFilter, onlyWithPurchase, onlyProfitable, filtered.length]
   );
 
   const { start: vStart, end: vEnd, paddingTop, paddingBottom } = useVirtualRows(
@@ -483,12 +490,12 @@ function ProductsTable({
                   </button>
                 </>
               ) : null}
-              {brandFilter.length ? (
+              {activeBrandFilter.length ? (
                 <>
                   {' '}
                   · бренд:{' '}
                   <span className="font-medium text-brand-700">
-                    {brandFilter.length === 1 ? brandFilter[0] : `${brandFilter.length} шт.`}
+                    {activeBrandFilter.length === 1 ? activeBrandFilter[0] : `${activeBrandFilter.length} шт.`}
                   </span>
                   <button
                     type="button"
@@ -518,7 +525,7 @@ function ProductsTable({
             <button type="button" className="btn-secondary" onClick={() => exportCsv(filtered, visibleColumns)}>
               CSV
             </button>
-            <BrandFilter rows={rows} selected={brandFilter} onChange={onBrandFilterChange} />
+            <BrandFilter rows={rows} selected={activeBrandFilter} onChange={onBrandFilterChange} />
             <input
               className="input w-56"
               placeholder="Поиск: артикул, nmId, бренд…"
