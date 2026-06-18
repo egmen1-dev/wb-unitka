@@ -43,6 +43,8 @@ npm run dev:unit
 
 ### Ручной деплой
 
+**Никогда** не запускайте `npm run deploy:feedbacks` и не деплойте `vercel.feedbacks.json` на проект **wb-unitka** — только `deploy:unit` / `vercel.unit.json`. См. [DEPLOY-WB-UNITKA.md](../.github/DEPLOY-WB-UNITKA.md).
+
 ```bash
 npm run deploy:unit
 ```

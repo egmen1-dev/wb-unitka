@@ -31,8 +31,14 @@ jobs:
             const fs = require('fs');
             for (const f of ['vercel.json', 'vercel.unit.json']) {
               const c = JSON.parse(fs.readFileSync(f, 'utf8'));
-              if (!String(c.buildCommand || '').includes('wb-unit-calc') || c.outputDirectory !== 'wb-unit-calc/dist') {
-                console.error(f + ' must build wb-unit-calc, got:', c.buildCommand, c.outputDirectory);
+              const out = String(c.outputDirectory || '');
+              const build = String(c.buildCommand || '');
+              if (out.includes('feedbacks') || build.includes('feedbacks')) {
+                console.error(f + ' must not reference feedbacks (wb-unitka project only):', build, out);
+                process.exit(1);
+              }
+              if (!build.includes('wb-unit-calc') || out !== 'wb-unit-calc/dist') {
+                console.error(f + ' must build wb-unit-calc, got:', build, out);
                 process.exit(1);
               }
             }
