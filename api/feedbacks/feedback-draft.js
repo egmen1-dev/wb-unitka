@@ -1,8 +1,10 @@
 import { fetchContentCardsByNmIds, withWbApiToken } from '../../lib/wb-official-api.js';
 import {
-  buildFeedbackPrompt,
+  buildFeedbackSystemPrompt,
+  buildFeedbackUserMessage,
   buildTemplateDraft,
   catalogRowToProductContext,
+  detectBuyerScenario,
   listAlternativeCandidates,
   pickAlternativeProduct,
   pickPremiumUpsell,
@@ -68,16 +70,7 @@ async function enrichProductFromContent(token, row, feedback) {
   }
 }
 
-function feedbackSystemPrompt({ regenerate = false, variationSeed = null } = {}) {
-  const seed = variationSeed ?? Date.now();
-  const temperatureNote = regenerate
-    ? 'Это перегенерация — используй другие обороты и структуру.'
-    : 'Каждый ответ уникален по формулировкам.';
-  return `Ты пишешь живые ответы продавца на отзывы WB на «ты». ${temperatureNote} Seed вариации: ${seed}. Только готовый текст, без кавычек.`;
-}
-
-async function generateWithOpenAI(prompt, apiKey, { regenerate = false, variationSeed = null } = {}) {
-  const seed = variationSeed ?? Date.now();
+async function generateWithOpenAI(userPrompt, systemPrompt, apiKey, { regenerate = false } = {}) {
   const temperature = regenerate ? 0.92 : 0.82;
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -94,8 +87,8 @@ async function generateWithOpenAI(prompt, apiKey, { regenerate = false, variatio
       frequency_penalty: regenerate ? 0.5 : 0.2,
       max_tokens: 450,
       messages: [
-        { role: 'system', content: feedbackSystemPrompt({ regenerate, variationSeed: seed }) },
-        { role: 'user', content: prompt },
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
       ],
     }),
   });
@@ -117,12 +110,11 @@ async function generateWithOpenAI(prompt, apiKey, { regenerate = false, variatio
   return draft;
 }
 
-async function generateWithYandex(prompt, { regenerate = false, variationSeed = null } = {}) {
-  const seed = variationSeed ?? Date.now();
-  const temperature = regenerate ? 0.9 : 0.75;
+async function generateWithYandex(userPrompt, systemPrompt, { regenerate = false, variationSeed = null } = {}) {
+  const temperature = regenerate ? 0.92 : 0.78;
   const { text } = await completeYandexGpt({
-    system: feedbackSystemPrompt({ regenerate, variationSeed: seed }),
-    user: prompt,
+    system: systemPrompt,
+    user: userPrompt,
     temperature,
     maxTokens: 450,
   });
@@ -175,16 +167,17 @@ export default async function handler(req, res) {
   const rating = Number(feedback?.rating) || 0;
   const alternative = pickAlternativeProduct(catalogRows, feedback, feedback.nmId);
   const premiumUpsell = rating >= 4 ? pickPremiumUpsell(catalogRows, feedback.nmId) : null;
+  const scenario = detectBuyerScenario(feedback);
   const candidates = listAlternativeCandidates(catalogRows, feedback, feedback.nmId, 6);
 
-  const prompt = buildFeedbackPrompt({
+  const systemPrompt = buildFeedbackSystemPrompt({ scenario, variationSeed, regenerate });
+  const userPrompt = buildFeedbackUserMessage({
     feedback,
     product,
     alternative,
     premiumUpsell,
     candidates,
-    variationSeed,
-    regenerate,
+    scenario,
   });
 
   const yandexConfigured = Boolean(readYandexConfig());
@@ -198,14 +191,14 @@ export default async function handler(req, res) {
 
   if (yandexConfigured) {
     try {
-      draft = await generateWithYandex(prompt, { regenerate, variationSeed });
+      draft = await generateWithYandex(userPrompt, systemPrompt, { regenerate, variationSeed });
       source = regenerate ? 'yandex-regen' : 'yandex';
       provider = 'yandex';
     } catch (error) {
       console.error('[feedbacks/feedback-draft] YandexGPT', error);
       if (openaiKey) {
         try {
-          draft = await generateWithOpenAI(prompt, openaiKey, { regenerate, variationSeed });
+          draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, { regenerate, variationSeed });
           source = regenerate ? 'openai-regen' : 'openai';
           provider = 'openai';
         } catch (openaiError) {
@@ -222,7 +215,7 @@ export default async function handler(req, res) {
     }
   } else if (openaiKey) {
     try {
-      draft = await generateWithOpenAI(prompt, openaiKey, { regenerate, variationSeed });
+      draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, { regenerate, variationSeed });
       source = regenerate ? 'openai-regen' : 'openai';
       provider = 'openai';
     } catch (error) {
@@ -245,7 +238,19 @@ export default async function handler(req, res) {
     variationSeed,
     yandexConfigured,
     openaiConfigured: Boolean(openaiKey),
-    promptPreview: prompt.slice(0, 1400),
+    scenario: {
+      type: scenario.type,
+      label: scenario.label,
+      tone: scenario.tone,
+      keywords: scenario.keywords,
+      mirrorPhrases: scenario.mirrorPhrases,
+    },
+    parsedReview: {
+      bables: scenario.parsed.bables,
+      matchingSize: scenario.parsed.matchingSize,
+      themes: scenario.parsed.themes,
+    },
+    promptPreview: `${systemPrompt.slice(0, 700)}\n---\n${userPrompt.slice(0, 700)}`,
     product,
     alternative,
     premiumUpsell,

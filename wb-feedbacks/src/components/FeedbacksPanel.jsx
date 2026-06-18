@@ -41,6 +41,24 @@ function formatDate(iso) {
   }
 }
 
+function scenarioBadgeClass(tone) {
+  if (tone === 'positive') return 'bg-emerald-100 text-emerald-800';
+  if (tone === 'negative') return 'bg-rose-100 text-rose-800';
+  return 'bg-amber-100 text-amber-800';
+}
+
+function ScenarioBadge({ scenario }) {
+  if (!scenario?.label) return null;
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${scenarioBadgeClass(scenario.tone)}`}
+      title={scenario.keywords?.length ? `Ключевые слова: ${scenario.keywords.join(', ')}` : scenario.label}
+    >
+      {scenario.label}
+    </span>
+  );
+}
+
 function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
   if (!feedback || !draft) return null;
 
@@ -58,7 +76,10 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">Предпросмотр ответа</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-slate-800">Предпросмотр ответа</h3>
+            <ScenarioBadge scenario={draft.scenario} />
+          </div>
           <p className="mt-1 text-xs text-slate-500">Так ответ увидит покупатель на WB после модерации</p>
         </div>
 
@@ -553,6 +574,7 @@ export default function FeedbacksPanel({ token }) {
             premiumUpsell: payload.premiumUpsell,
             validation: payload.validation,
             hint: payload.hint,
+            scenario: payload.scenario || null,
           },
         }));
         if (payload.provider === 'yandex' || payload.provider === 'openai') {
@@ -828,7 +850,8 @@ export default function FeedbacksPanel({ token }) {
 
               {isOpen ? (
                 <div className="mt-4 border-t border-slate-100 pt-4">
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {draft?.scenario ? <ScenarioBadge scenario={draft.scenario} /> : null}
                     <button
                       type="button"
                       className="btn-secondary text-sm"
