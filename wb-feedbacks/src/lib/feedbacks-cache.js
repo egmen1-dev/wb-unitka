@@ -63,6 +63,17 @@ export function getCachedFeedbacksList(token) {
   return entry;
 }
 
+/** Last saved list for token — ignores TTL (429 / failed refresh fallback). */
+export function getStaleCachedFeedbacksList(token) {
+  const fp = tokenFingerprint(token);
+  if (!fp) return null;
+
+  const entry = readStorageEntry();
+  if (!entry || entry.tokenHash !== fp) return null;
+  if (!Array.isArray(entry.feedbacks) || entry.feedbacks.length === 0) return null;
+  return entry;
+}
+
 export function setCachedFeedbacksList(token, { feedbacks, countUnanswered, hasMore }) {
   const fp = tokenFingerprint(token);
   if (!fp) return;
@@ -99,9 +110,10 @@ export function getFeedbacksCacheAgeMinutes(entry) {
   return Math.floor((Date.now() - entry.fetchedAt) / 60_000);
 }
 
-export function formatCacheBadge(entry) {
+export function formatCacheBadge(entry, { short = false } = {}) {
+  if (short) return 'из кэша';
   const mins = getFeedbacksCacheAgeMinutes(entry);
-  if (mins == null) return '';
+  if (mins == null) return 'из кэша';
   if (mins < 1) return 'из кэша, обновлено менее минуты назад';
   return `из кэша, обновлено ${mins} мин назад`;
 }

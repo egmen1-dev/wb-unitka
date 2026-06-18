@@ -9,6 +9,7 @@ import {
   getCachedFeedbacksList,
   getCachedUnansweredCount,
   getFeedbacksRateLimitSecondsLeft,
+  getStaleCachedFeedbacksList,
   isFeedbacksRateLimited,
   setCachedFeedbacksList,
   setCachedUnansweredCount,
@@ -188,9 +189,31 @@ function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
 function formatRateLimitError(payload, status) {
   if (status === 429 || payload?.code === 'RATE_LIMIT') {
     const sec = Number(payload?.retryAfterSec) || 5;
-    return `429 подождите ${sec} сек`;
+    return `Подождите ${sec} сек`;
   }
   return null;
+}
+
+function cachedListToData(entry) {
+  if (!entry) return null;
+  return {
+    feedbacks: entry.feedbacks || [],
+    countUnanswered: entry.countUnanswered ?? entry.feedbacks?.length ?? 0,
+    hasMore: entry.hasMore ?? false,
+  };
+}
+
+function applyCachedListToState(entry, { setData, setCacheBadge, setStatus, dataRef, hasDataRef }) {
+  const cachedData = cachedListToData(entry);
+  if (!cachedData?.feedbacks?.length) return false;
+  dataRef.current = cachedData;
+  setData(cachedData);
+  hasDataRef.current = true;
+  const badge = formatCacheBadge(entry, { short: true });
+  setCacheBadge(badge);
+  const count = cachedData.countUnanswered;
+  setStatus(`Без ответа: ${count} · ${badge}`);
+  return true;
 }
 
 function formatAiConfigLabel({ yandexConfigured, openaiConfigured, loading, apiCheckStatus }) {
@@ -380,8 +403,6 @@ export default function FeedbacksPanel({ token }) {
     endpoint: '',
   });
   const [cacheBadge, setCacheBadge] = useState('');
-  const refreshLockRef = useRef(false);
-  const refreshDebounceRef = useRef(null);
   const loadAttemptRef = useRef(0);
   const hasDataRef = useRef(false);
   const dataRef = useRef(null);
@@ -390,6 +411,22 @@ export default function FeedbacksPanel({ token }) {
   const abortRef = useRef(null);
   const aiCheckStartedRef = useRef(false);
   const loadingWatchdogRef = useRef(null);
+
+  const restoreCachedList = useCallback(
+    ({ stale = false } = {}) => {
+      const entry = stale
+        ? getStaleCachedFeedbacksList(token) || getCachedFeedbacksList(token)
+        : getCachedFeedbacksList(token) || getStaleCachedFeedbacksList(token);
+      return applyCachedListToState(entry, {
+        setData,
+        setCacheBadge,
+        setStatus,
+        dataRef,
+        hasDataRef,
+      });
+    },
+    [token]
+  );
 
   const clearLoadingWatchdog = useCallback(() => {
     if (loadingWatchdogRef.current) {
@@ -425,13 +462,19 @@ export default function FeedbacksPanel({ token }) {
         return;
       }
 
+      const showRateLimit = (sec) => {
+        setFeedbacksRateLimited(sec);
+        setRateLimitCountdown(sec);
+        restoreCachedList({ stale: true });
+        setError(`Подождите ${sec} сек`);
+      };
+
       if (force && !append) {
         loadAttemptRef.current = 0;
-        if (isFeedbacksRateLimited()) {
+        if (isFeedbacksRateLimited() && !isRetry) {
           const sec = getFeedbacksRateLimitSecondsLeft();
-          if (sec > 0 && !isRetry) {
-            setRateLimitCountdown(sec);
-            setError(`429 подождите ${sec} сек`);
+          if (sec > 0) {
+            showRateLimit(sec);
             return;
           }
           clearFeedbacksRateLimit();
@@ -445,8 +488,7 @@ export default function FeedbacksPanel({ token }) {
 
       if (!force && !isRetry && !append && isFeedbacksRateLimited()) {
         const sec = getFeedbacksRateLimitSecondsLeft();
-        setRateLimitCountdown(sec);
-        setError(`429 подождите ${sec} сек`);
+        showRateLimit(sec);
         return;
       }
 
@@ -484,21 +526,23 @@ export default function FeedbacksPanel({ token }) {
         if (!response.ok) {
           if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
             const sec = Number(payload?.retryAfterSec) || 5;
-            setFeedbacksRateLimited(sec);
-            setRateLimitCountdown(sec);
             if (!isRetry && loadAttemptRef.current < 1) {
               loadAttemptRef.current += 1;
-              setError(`429 подождите ${sec} сек…`);
+              showRateLimit(sec);
               if (append) setLoadingMore(false);
               else {
                 setLoading(false);
                 loadInFlightRef.current = false;
+                clearLoadingWatchdog();
               }
               await new Promise((resolve) => {
                 autoRetryTimerRef.current = setTimeout(resolve, sec * 1000);
               });
+              clearFeedbacksRateLimit();
               return loadFeedbacks({ force: true, isRetry: true, append, skip });
             }
+            showRateLimit(sec);
+            return;
           }
           throw new Error(formatApiError(payload, response.status));
         }
@@ -528,6 +572,7 @@ export default function FeedbacksPanel({ token }) {
         setStatus(`Без ответа: ${count}`);
       } catch (err) {
         if (err?.message === 'Запрос отменён') return;
+        restoreCachedList({ stale: true });
         setError(err.message || 'Ошибка загрузки');
       } finally {
         if (append) setLoadingMore(false);
@@ -538,7 +583,7 @@ export default function FeedbacksPanel({ token }) {
         }
       }
     },
-    [token, startLoadingWatchdog, clearLoadingWatchdog, cancelForegroundLoad]
+    [token, startLoadingWatchdog, clearLoadingWatchdog, cancelForegroundLoad, restoreCachedList]
   );
 
   const loadMoreFeedbacks = useCallback(() => {
@@ -555,14 +600,8 @@ export default function FeedbacksPanel({ token }) {
   }, []);
 
   const handleRefresh = useCallback(() => {
-    if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
-    refreshDebounceRef.current = setTimeout(() => {
-      if (refreshLockRef.current) return;
-      refreshLockRef.current = true;
-      loadFeedbacks({ force: true }).finally(() => {
-        refreshLockRef.current = false;
-      });
-    }, 200);
+    if (loadInFlightRef.current) return;
+    loadFeedbacks({ force: true });
   }, [loadFeedbacks]);
 
   useEffect(() => {
@@ -576,20 +615,16 @@ export default function FeedbacksPanel({ token }) {
       return undefined;
     }
 
-    const cached = getCachedFeedbacksList(token);
+    const cached = getCachedFeedbacksList(token) || getStaleCachedFeedbacksList(token);
     if (cached) {
       hasDataRef.current = true;
-      const cachedData = {
-        feedbacks: cached.feedbacks || [],
-        countUnanswered: cached.countUnanswered ?? cached.feedbacks?.length ?? 0,
-        hasMore: cached.hasMore ?? false,
-      };
+      const cachedData = cachedListToData(cached);
       dataRef.current = cachedData;
       setData(cachedData);
-      const badge = formatCacheBadge(cached);
+      const badge = formatCacheBadge(cached, { short: true });
       setCacheBadge(badge);
-      const count = cached.countUnanswered ?? cached.feedbacks?.length ?? 0;
-      setStatus(badge ? `Без ответа: ${count} · ${badge}` : `Без ответа: ${count}`);
+      const count = cachedData.countUnanswered;
+      setStatus(`Без ответа: ${count} · ${badge}`);
       setError('');
       setLoading(false);
       loadAttemptRef.current = 0;
@@ -617,14 +652,18 @@ export default function FeedbacksPanel({ token }) {
     const timer = setInterval(() => {
       const left = getFeedbacksRateLimitSecondsLeft();
       setRateLimitCountdown(left);
-      if (left <= 0) clearFeedbacksRateLimit();
+      if (left <= 0) {
+        clearFeedbacksRateLimit();
+        setError((prev) => (prev.startsWith('Подождите') ? '' : prev));
+      } else {
+        setError(`Подождите ${left} сек`);
+      }
     }, 1000);
     return () => clearInterval(timer);
   }, [rateLimitCountdown]);
 
   useEffect(
     () => () => {
-      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
       if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
       abortRef.current?.abort();
       clearLoadingWatchdog();
@@ -742,7 +781,8 @@ export default function FeedbacksPanel({ token }) {
             const sec = Number(payload?.retryAfterSec) || 5;
             setFeedbacksRateLimited(sec);
             setRateLimitCountdown(sec);
-            throw new Error(`429 подождите ${sec} сек`);
+            restoreCachedList({ stale: true });
+            throw new Error(`Подождите ${sec} сек`);
           }
           throw new Error(payload.error || 'Не удалось отправить ответ');
         }
@@ -761,7 +801,7 @@ export default function FeedbacksPanel({ token }) {
         setSendingId(null);
       }
     },
-    [token, drafts, loadFeedbacks]
+    [token, drafts, loadFeedbacks, restoreCachedList]
   );
 
   const feedbacks = data?.feedbacks || [];
@@ -808,6 +848,7 @@ export default function FeedbacksPanel({ token }) {
           <button
             type="button"
             className="btn-secondary text-sm"
+            disabled={loading || loadingMore}
             onClick={handleRefresh}
           >
             {loading ? 'Загрузка…' : 'Обновить'}
@@ -883,18 +924,20 @@ export default function FeedbacksPanel({ token }) {
         {error ? (
           <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
             <p>{error}</p>
-            <button
-              type="button"
-              className="btn-secondary mt-2 text-xs"
-              disabled={loading || rateLimitCountdown > 0}
-              onClick={() => {
-                loadAttemptRef.current = 0;
-                clearFeedbacksRateLimit();
-                loadFeedbacks({ force: true });
-              }}
-            >
-              {rateLimitCountdown > 0 ? `Повторить через ${rateLimitCountdown} сек` : 'Повторить загрузку'}
-            </button>
+            {!error.startsWith('Подождите') ? (
+              <button
+                type="button"
+                className="btn-secondary mt-2 text-xs"
+                disabled={loading || loadingMore}
+                onClick={() => {
+                  loadAttemptRef.current = 0;
+                  clearFeedbacksRateLimit();
+                  loadFeedbacks({ force: true });
+                }}
+              >
+                Повторить загрузку
+              </button>
+            ) : null}
           </div>
         ) : null}
         {status ? <p className="mt-2 text-xs text-slate-600">{status}</p> : null}
