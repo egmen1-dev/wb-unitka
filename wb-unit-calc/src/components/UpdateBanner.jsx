@@ -20,13 +20,10 @@ export default function UpdateBanner() {
     }
 
     check();
-    const timer = setInterval(check, 5 * 60 * 1000);
-    const onFocus = () => check();
-    window.addEventListener('focus', onFocus);
+    const timer = setInterval(check, 30 * 60 * 1000);
     return () => {
       cancelled = true;
       clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
     };
   }, []);
 

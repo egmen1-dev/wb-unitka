@@ -47,6 +47,7 @@ import {
   saveStoredTeam,
   saveWorkspaceRemote,
 } from './lib/workspace-api';
+import { formatWorkspaceUpdatedAt, workspaceTimestampsEqual } from './lib/workspace-sync';
 import {
   applyCatalogToPurchases,
   countCatalogMatches,
@@ -186,7 +187,7 @@ function bootActiveProfileId(bootPayload, profiles) {
   return '';
 }
 
-function applyWorkspacePayload(payload, setters, { keepRows = [], keepProfiles = [] } = {}) {
+function applyWorkspacePayload(payload, setters, { keepRows = [], keepProfiles = [], localSettingsUpdatedAt = '' } = {}) {
   if (!payload) return;
   if (payload.ownerClientId != null) setters.setOwnerClientId(payload.ownerClientId);
 
@@ -201,19 +202,25 @@ function applyWorkspacePayload(payload, setters, { keepRows = [], keepProfiles =
   }
 
   if (payload.purchases !== undefined) {
-    setters.setPurchases({ ...payload.purchases });
+    setters.setPurchases((prev) => ({ ...payload.purchases, ...prev }));
   }
   if (payload.supplierCatalogs?.items?.length) {
     setters.setSupplierCatalogs(payload.supplierCatalogs);
   }
   if (payload.productOverrides !== undefined) {
-    setters.setProductOverrides(payload.productOverrides);
+    setters.setProductOverrides((prev) => ({ ...payload.productOverrides, ...prev }));
   }
 
   if (payload.settings != null) {
-    setters.setSettings(mergeUnitSettings(payload.settings));
-  }
-  if (payload.settingsUpdatedAt !== undefined) {
+    const remoteTs = payload.settingsUpdatedAt || '';
+    const localTs = localSettingsUpdatedAt || '';
+    if (!localTs || !remoteTs || remoteTs >= localTs) {
+      setters.setSettings(mergeUnitSettings(payload.settings));
+      if (payload.settingsUpdatedAt !== undefined) {
+        setters.setSettingsUpdatedAt(payload.settingsUpdatedAt || '');
+      }
+    }
+  } else if (payload.settingsUpdatedAt !== undefined) {
     setters.setSettingsUpdatedAt(payload.settingsUpdatedAt || '');
   }
 
@@ -351,6 +358,13 @@ export default function App() {
   const skipCloudSave = useRef(true);
   const syncRunId = useRef(0);
   const persistTimer = useRef(null);
+  const pushToCloudRef = useRef(async () => {});
+  const workspaceUpdatedAtRef = useRef(workspaceUpdatedAt);
+  const settingsUpdatedAtRef = useRef(settingsUpdatedAt);
+  const lastLocalPushAtRef = useRef(0);
+  const lastFocusPullAtRef = useRef(0);
+  workspaceUpdatedAtRef.current = workspaceUpdatedAt;
+  settingsUpdatedAtRef.current = settingsUpdatedAt;
   const baseRowsRef = useRef(baseRows);
   baseRowsRef.current = baseRows;
   const profilesRef = useRef(profiles);
@@ -464,9 +478,12 @@ export default function App() {
       ownerClientId: ownerClientIdForPayload(ownerClientId),
       teamAccess: accessForCloud,
     });
-    await saveWorkspaceRemote(team, payload);
-    const updatedAt = new Date().toISOString();
+    const result = await saveWorkspaceRemote(team, payload);
+    lastLocalPushAtRef.current = Date.now();
+    const serverUpdatedAt = formatWorkspaceUpdatedAt(result?.updatedAt);
+    const updatedAt = serverUpdatedAt || new Date().toISOString();
     setWorkspaceUpdatedAt(updatedAt);
+    workspaceUpdatedAtRef.current = updatedAt;
     saveWorkspaceSnapshot(team, { payload, updatedAt, name: teamName });
   }, [
     team,
@@ -489,7 +506,9 @@ export default function App() {
 
   const refreshTeamWorkspace = useCallback(async (teamCode, { ifUnchangedSince = '' } = {}) => {
     const data = await fetchWorkspace(teamCode);
-    const unchanged = Boolean(ifUnchangedSince && data.updatedAt === ifUnchangedSince);
+    const unchanged = Boolean(
+      ifUnchangedSince && workspaceTimestampsEqual(data.updatedAt, ifUnchangedSince)
+    );
     if (!unchanged) {
       const hadLocalRows = baseRowsRef.current.length > 0;
       const cloudEmpty = !data.payload?.cache?.rows?.length;
@@ -510,12 +529,14 @@ export default function App() {
           setMeta,
           setWbProductCache,
         },
-        { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current }
+        { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current, localSettingsUpdatedAt: settingsUpdatedAtRef.current }
       );
       if (hadLocalRows && cloudEmpty) {
         setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
       }
-      setWorkspaceUpdatedAt(data.updatedAt || '');
+      const remoteUpdatedAt = formatWorkspaceUpdatedAt(data.updatedAt);
+      setWorkspaceUpdatedAt(remoteUpdatedAt);
+      workspaceUpdatedAtRef.current = remoteUpdatedAt;
       saveWorkspaceSnapshot(teamCode, data);
       if (data.payload?.cache?.syncedAt || data.payload?.cache?.rows?.length) {
         suppressAutoSyncRef.current = true;
@@ -548,13 +569,23 @@ export default function App() {
   }, [refreshTeamWorkspace, workspaceUpdatedAt]);
 
   useEffect(() => {
+    pushToCloudRef.current = pushToCloud;
+  }, [pushToCloud]);
+
+  useEffect(() => {
     if (!team || cloudSyncing || loading || enriching) return undefined;
 
     async function pullRemote() {
       if (skipCloudSave.current) return;
+      if (Date.now() - lastLocalPushAtRef.current < 15000) return;
       try {
         const data = await fetchWorkspace(team);
-        if (!data.updatedAt || data.updatedAt === workspaceUpdatedAt) return;
+        if (
+          !data.updatedAt ||
+          workspaceTimestampsEqual(data.updatedAt, workspaceUpdatedAtRef.current)
+        ) {
+          return;
+        }
         const hadLocalRows = baseRowsRef.current.length > 0;
         const cloudEmpty = !data.payload?.cache?.rows?.length;
         applyWorkspacePayload(
@@ -564,7 +595,6 @@ export default function App() {
             setTeamAccess,
             setProfiles,
             setActiveProfileId,
-            setWbFeedbacksToken,
             setPurchases,
             setSettings,
             setSettingsUpdatedAt,
@@ -575,26 +605,62 @@ export default function App() {
             setMeta,
             setWbProductCache,
           },
-          { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current }
+          {
+            keepRows: baseRowsRef.current,
+            keepProfiles: profilesRef.current,
+            localSettingsUpdatedAt: settingsUpdatedAtRef.current,
+          }
         );
         if (hadLocalRows && cloudEmpty) {
           setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
         }
-        setWorkspaceUpdatedAt(data.updatedAt);
+        const remoteUpdatedAt = formatWorkspaceUpdatedAt(data.updatedAt);
+        setWorkspaceUpdatedAt(remoteUpdatedAt);
+        workspaceUpdatedAtRef.current = remoteUpdatedAt;
         saveWorkspaceSnapshot(team, data);
       } catch {
         // ignore background refresh errors
       }
     }
 
-    const onFocus = () => pullRemote();
+    const onFocus = () => {
+      if (Date.now() - lastFocusPullAtRef.current < 30000) return;
+      lastFocusPullAtRef.current = Date.now();
+      pullRemote();
+    };
     window.addEventListener('focus', onFocus);
-    const timer = setInterval(pullRemote, 60000);
+    const timer = setInterval(pullRemote, 120000);
     return () => {
       window.removeEventListener('focus', onFocus);
       clearInterval(timer);
     };
-  }, [team, cloudSyncing, loading, enriching, workspaceUpdatedAt]);
+  }, [team, cloudSyncing, loading, enriching]);
+
+  useEffect(() => {
+    if (!team || loading || enriching || cloudSyncing) return undefined;
+    const timer = setTimeout(() => {
+      pushToCloudRef.current().catch((err) => setCloudStatus(`Ошибка сохранения: ${err.message}`));
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [
+    team,
+    loading,
+    enriching,
+    cloudSyncing,
+    profiles,
+    activeProfileId,
+    purchases,
+    settings,
+    settingsUpdatedAt,
+    supplierCatalogs,
+    productOverrides,
+    baseRows,
+    meta,
+    syncedAt,
+    wbProductCache,
+    teamAccess,
+    ownerClientId,
+  ]);
 
   useEffect(() => {
     if (profiles.length) return;
@@ -684,20 +750,6 @@ export default function App() {
     const timer = setTimeout(() => saveWbProductCache(wbProductCache), 2500);
     return () => clearTimeout(timer);
   }, [loading, enriching, wbProductCache]);
-
-  useEffect(() => {
-    if (!team || loading || enriching || cloudSyncing) return undefined;
-    const timer = setTimeout(() => {
-      pushToCloud().catch((err) => setCloudStatus(`Ошибка сохранения: ${err.message}`));
-    }, 3500);
-    return () => clearTimeout(timer);
-  }, [
-    team,
-    loading,
-    enriching,
-    cloudSyncing,
-    pushToCloud,
-  ]);
 
   const applySyncResult = useCallback(
     (data, { urgent = false } = {}) => {
