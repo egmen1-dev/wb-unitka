@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import FeedbacksPanel from './components/FeedbacksPanel';
 import TokenPanel from './components/TokenPanel';
 import { APP_BUILD } from './lib/app-build';
@@ -20,9 +20,15 @@ function BootStatus({ error }) {
 export default function App() {
   const [token, setToken] = useState(() => loadToken());
   const [bootError, setBootError] = useState(null);
+  const [bootReady, setBootReady] = useState(false);
+
+  useLayoutEffect(() => {
+    setBootReady(true);
+  }, []);
 
   useEffect(() => {
-    clearStaleFeedbacksCacheOnBoot();
+    const timer = window.setTimeout(() => clearStaleFeedbacksCacheOnBoot(), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -53,7 +59,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-5">
+      <main className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-5" data-boot-ready={bootReady ? '1' : '0'}>
         <BootStatus error={bootError} />
         <TokenPanel token={token} onTokenChange={setToken} />
         <FeedbacksPanel token={token} />
@@ -69,7 +75,7 @@ export default function App() {
               Юнитки WB
             </a>
           </p>
-          <p className="font-mono text-[10px] text-slate-300">v{APP_BUILD}</p>
+          <p className="font-mono text-[10px] text-slate-300">build {APP_BUILD}</p>
         </footer>
       </main>
     </div>

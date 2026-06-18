@@ -317,7 +317,6 @@ function formatApiError(payload, status, fallback = 'Не удалось заг�
 
 export default function FeedbacksPanel({ token }) {
   const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -344,10 +343,9 @@ export default function FeedbacksPanel({ token }) {
   const hasDataRef = useRef(false);
   const dataRef = useRef(null);
   const loadInFlightRef = useRef(false);
-  const backgroundInFlightRef = useRef(false);
   const autoRetryTimerRef = useRef(null);
   const abortRef = useRef(null);
-  const bgAbortRef = useRef(null);
+  const aiCheckStartedRef = useRef(false);
   const loadingWatchdogRef = useRef(null);
 
   const clearLoadingWatchdog = useCallback(() => {
@@ -368,22 +366,6 @@ export default function FeedbacksPanel({ token }) {
     }, LOADING_WATCHDOG_MS);
   }, [clearLoadingWatchdog]);
 
-  const waitForRateLimit = useCallback(async () => {
-    if (!isFeedbacksRateLimited()) return;
-    const sec = getFeedbacksRateLimitSecondsLeft();
-    if (sec <= 0) {
-      clearFeedbacksRateLimit();
-      return;
-    }
-    setRateLimitCountdown(sec);
-    setError(`429 подождите ${sec} сек…`);
-    await new Promise((resolve) => {
-      autoRetryTimerRef.current = setTimeout(resolve, sec * 1000);
-    });
-    clearFeedbacksRateLimit();
-    setRateLimitCountdown(0);
-  }, []);
-
   const cancelForegroundLoad = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -394,13 +376,13 @@ export default function FeedbacksPanel({ token }) {
   }, [clearLoadingWatchdog]);
 
   const loadFeedbacks = useCallback(
-    async ({ force = false, isRetry = false, append = false, skip = 0, background = false } = {}) => {
+    async ({ force = false, isRetry = false, append = false, skip = 0 } = {}) => {
       if (!token?.trim()) {
         setError('Нет токена');
         return;
       }
 
-      if (force && !append && !background) {
+      if (force && !append) {
         loadAttemptRef.current = 0;
         if (isFeedbacksRateLimited()) {
           const sec = getFeedbacksRateLimitSecondsLeft();
@@ -414,30 +396,14 @@ export default function FeedbacksPanel({ token }) {
         if (loadInFlightRef.current) {
           cancelForegroundLoad();
         }
-      } else if (background) {
-        if (backgroundInFlightRef.current || loadInFlightRef.current) return;
       } else if (loadInFlightRef.current && !append) {
         return;
       }
 
       if (!force && !isRetry && !append && isFeedbacksRateLimited()) {
-        if (loadAttemptRef.current < 1) {
-          loadAttemptRef.current += 1;
-          setLoading(true);
-          startLoadingWatchdog();
-          try {
-            await waitForRateLimit();
-            return await loadFeedbacks({ force: true, isRetry: true });
-          } finally {
-            clearLoadingWatchdog();
-            setLoading(false);
-          }
-        }
         const sec = getFeedbacksRateLimitSecondsLeft();
         setRateLimitCountdown(sec);
         setError(`429 подождите ${sec} сек`);
-        setLoading(false);
-        loadInFlightRef.current = false;
         return;
       }
 
@@ -446,27 +412,17 @@ export default function FeedbacksPanel({ token }) {
         setStatus(`Без ответа: ${cachedCount}`);
       }
 
-      const signalRef = background ? bgAbortRef : abortRef;
-
       if (append) {
         setLoadingMore(true);
-      } else if (background) {
-        bgAbortRef.current?.abort();
-        bgAbortRef.current = new AbortController();
-        backgroundInFlightRef.current = true;
-        setRefreshing(true);
       } else {
-        bgAbortRef.current?.abort();
-        backgroundInFlightRef.current = false;
-        setRefreshing(false);
         abortRef.current?.abort();
         abortRef.current = new AbortController();
         loadInFlightRef.current = true;
         setLoading(true);
         startLoadingWatchdog();
       }
-      if (!isRetry && !append && !background) setError('');
-      if ((!cachedCount || force) && !append && !background) setStatus('');
+      if (!isRetry && !append) setError('');
+      if ((!cachedCount || force) && !append) setStatus('');
       try {
         const response = await fetchWithTimeout(
           '/api/feedbacks/feedbacks',
@@ -477,7 +433,7 @@ export default function FeedbacksPanel({ token }) {
               Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({ action: 'list', take: PAGE_SIZE, skip }),
-            signal: signalRef.current?.signal,
+            signal: abortRef.current?.signal,
           },
           LOADING_WATCHDOG_MS
         );
@@ -489,21 +445,16 @@ export default function FeedbacksPanel({ token }) {
             setRateLimitCountdown(sec);
             if (!isRetry && loadAttemptRef.current < 1) {
               loadAttemptRef.current += 1;
-              if (!background) {
-                setError(`429 подождите ${sec} сек…`);
-              }
+              setError(`429 подождите ${sec} сек…`);
               if (append) setLoadingMore(false);
-              else if (background) {
-                setRefreshing(false);
-                backgroundInFlightRef.current = false;
-              } else {
+              else {
                 setLoading(false);
                 loadInFlightRef.current = false;
               }
               await new Promise((resolve) => {
                 autoRetryTimerRef.current = setTimeout(resolve, sec * 1000);
               });
-              return loadFeedbacks({ force: true, isRetry: true, append, skip, background });
+              return loadFeedbacks({ force: true, isRetry: true, append, skip });
             }
           }
           throw new Error(formatApiError(payload, response.status));
@@ -534,25 +485,17 @@ export default function FeedbacksPanel({ token }) {
         setStatus(`Без ответа: ${count}`);
       } catch (err) {
         if (err?.message === 'Запрос отменён') return;
-        if (background && hasDataRef.current) {
-          const badge = formatCacheBadge(getCachedFeedbacksList(token));
-          if (badge) setCacheBadge(badge);
-          return;
-        }
         setError(err.message || 'Ошибка загрузки');
       } finally {
         if (append) setLoadingMore(false);
-        else if (background) {
-          setRefreshing(false);
-          backgroundInFlightRef.current = false;
-        } else {
+        else {
           clearLoadingWatchdog();
           setLoading(false);
           loadInFlightRef.current = false;
         }
       }
     },
-    [token, waitForRateLimit, startLoadingWatchdog, clearLoadingWatchdog, cancelForegroundLoad]
+    [token, startLoadingWatchdog, clearLoadingWatchdog, cancelForegroundLoad]
   );
 
   const loadMoreFeedbacks = useCallback(() => {
@@ -560,6 +503,13 @@ export default function FeedbacksPanel({ token }) {
     if (loadingMore || loading) return;
     loadFeedbacks({ force: true, append: true, skip: current });
   }, [data?.feedbacks?.length, loadFeedbacks, loading, loadingMore]);
+
+  const requestAiConfigCheck = useCallback(() => {
+    if (aiCheckStartedRef.current) return;
+    aiCheckStartedRef.current = true;
+    setAiConfig((prev) => ({ ...prev, loading: true, apiCheckStatus: 'loading' }));
+    fetchAiConfigStatus().then((result) => setAiConfig(result));
+  }, []);
 
   const handleRefresh = useCallback(() => {
     if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
@@ -571,23 +521,6 @@ export default function FeedbacksPanel({ token }) {
       });
     }, 200);
   }, [loadFeedbacks]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      if (cancelled) return;
-      setAiConfig((prev) => ({ ...prev, loading: true, apiCheckStatus: 'loading' }));
-      (async () => {
-        const result = await fetchAiConfigStatus();
-        if (!cancelled) setAiConfig(result);
-      })();
-    }, 5000);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -650,7 +583,6 @@ export default function FeedbacksPanel({ token }) {
     () => () => {
       if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
       if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
-      bgAbortRef.current?.abort();
       abortRef.current?.abort();
       clearLoadingWatchdog();
     },
@@ -818,11 +750,11 @@ export default function FeedbacksPanel({ token }) {
             className="btn-secondary text-sm"
             onClick={handleRefresh}
           >
-            {loading ? 'Загрузка…' : refreshing ? 'Обновление…' : 'Обновить'}
+            {loading ? 'Загрузка…' : 'Обновить'}
           </button>
         </div>
 
-        <details className="mt-3 text-xs text-slate-500">
+        <details className="mt-3 text-xs text-slate-500" onToggle={(event) => event.currentTarget.open && requestAiConfigCheck()}>
           <summary className="cursor-pointer text-slate-600 hover:text-slate-800">
             {formatAiConfigLabel(aiConfig)}
           </summary>
