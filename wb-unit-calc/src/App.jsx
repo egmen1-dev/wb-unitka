@@ -110,6 +110,22 @@ function readBootCache() {
   return { team, cache, teamWasMissingFromUrl };
 }
 
+function profileHasLocalToken(profileId) {
+  if (!profileId) return false;
+  return loadProfiles().some(
+    (profile) => profile.id === profileId && String(profile.token || '').trim()
+  );
+}
+
+/** Участник без своего ключа не должен запускать авто-синхронизацию WB при открытии. */
+function shouldPreferLocalTokens(teamCode, ownerClientId, bootUrlMissing) {
+  return (
+    Boolean(teamCode && !isTeamInUrl(teamCode)) ||
+    bootUrlMissing ||
+    (ownerClientId != null && ownerClientId !== getClientId())
+  );
+}
+
 function saveWorkspaceSnapshot(teamCode, data) {
   if (!teamCode || !data?.payload) return;
   saveWorkspaceCache(teamCode, {
@@ -327,6 +343,7 @@ export default function App() {
   const [cloudStatus, setCloudStatus] = useState('');
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudRefreshing, setCloudRefreshing] = useState(false);
+  const [cloudPullError, setCloudPullError] = useState('');
 
   useEffect(() => {
     if (!cloudStatus) return undefined;
@@ -435,6 +452,13 @@ export default function App() {
     () => checkTeamCreator({ team, ownerClientId }),
     [team, ownerClientId]
   );
+
+  const hasOwnWbToken = useMemo(() => {
+    const token = String(activeProfile?.token || '').trim();
+    if (!token) return false;
+    if (!team || isTeamCreator) return true;
+    return profileHasLocalToken(activeProfileId);
+  }, [activeProfile?.token, activeProfileId, team, isTeamCreator]);
 
   const myPermissions = useMemo(
     () =>
@@ -563,8 +587,11 @@ export default function App() {
     if (!unchanged) {
       const hadLocalRows = baseRowsRef.current.length > 0;
       const cloudEmpty = !data.payload?.cache?.rows?.length;
-      const preferLocalTokens =
-        Boolean(teamCode && !isTeamInUrl(teamCode)) || bootTeamUrlMissing.current;
+      const preferLocalTokens = shouldPreferLocalTokens(
+        teamCode,
+        data.payload?.ownerClientId,
+        bootTeamUrlMissing.current
+      );
       applyWorkspacePayload(
         data.payload,
         {
@@ -598,6 +625,13 @@ export default function App() {
       if (data.payload?.cache?.syncedAt || data.payload?.cache?.rows?.length) {
         suppressAutoSyncRef.current = true;
       }
+      if (
+        data.payload?.ownerClientId &&
+        data.payload.ownerClientId !== getClientId() &&
+        data.payload?.cache?.rows?.length
+      ) {
+        suppressAutoSyncRef.current = true;
+      }
     }
     return data;
   }, []);
@@ -624,6 +658,20 @@ export default function App() {
     setCloudStatus(`Команда «${data.name || data.teamCode}»`);
   }, [refreshTeamWorkspace, workspaceUpdatedAt]);
 
+  const retryCloudPull = useCallback(() => {
+    const candidate = team || getTeamFromUrl() || loadStoredTeam();
+    if (!candidate) return;
+    setCloudPullError('');
+    setCloudRefreshing(true);
+    loadTeamWorkspace(candidate)
+      .catch((err) => {
+        if (!err.needsTeam) {
+          setCloudPullError(err.message || 'Не удалось загрузить облако');
+        }
+      })
+      .finally(() => setCloudRefreshing(false));
+  }, [team, loadTeamWorkspace]);
+
   useEffect(() => {
     if (!team || cloudSyncing || loading || enriching) return undefined;
 
@@ -634,8 +682,11 @@ export default function App() {
         if (!data.updatedAt || data.updatedAt === workspaceUpdatedAt) return;
         const hadLocalRows = baseRowsRef.current.length > 0;
         const cloudEmpty = !data.payload?.cache?.rows?.length;
-        const preferLocalTokens =
-          Boolean(team && !isTeamInUrl(team)) || bootTeamUrlMissing.current;
+        const preferLocalTokens = shouldPreferLocalTokens(
+          team,
+          data.payload?.ownerClientId,
+          bootTeamUrlMissing.current
+        );
         applyWorkspacePayload(
           data.payload,
           {
@@ -706,44 +757,33 @@ export default function App() {
       }
 
       setTeam(candidate);
+      ensureTeamInUrl(candidate);
 
-      if (bootPayload?.cache?.rows?.length) {
-        skipCloudSave.current = false;
+      const hasCachedRows = Boolean(bootPayload?.cache?.rows?.length);
+      skipCloudSave.current = false;
+      if (hasCachedRows || bootPayload?.cache?.syncedAt) {
         suppressAutoSyncRef.current = true;
-        const runCloudRefresh = () => {
-          setCloudRefreshing(true);
-          refreshTeamWorkspace(candidate, {
-            ifUnchangedSince: boot.cache?.updatedAt || workspaceUpdatedAt || '',
-          })
-            .catch((err) => {
-              if (!err.needsTeam) {
-                setCloudStatus('Облако недоступно — показаны локальные данные');
-              }
-            })
-            .finally(() => setCloudRefreshing(false));
-        };
-        if (typeof requestIdleCallback === 'function') {
-          requestIdleCallback(runCloudRefresh, { timeout: 4000 });
-        } else {
-          setTimeout(runCloudRefresh, 300);
-        }
-        return;
       }
 
-      setCloudSyncing(true);
-      setError('');
-      try {
-        await loadTeamWorkspace(candidate);
-      } catch (err) {
-        if (!err.needsTeam) {
-          setError(err.message);
-        }
-        if (!bootPayload?.cache) {
-          setCloudStatus('Не удалось загрузить облако — показаны локальные данные');
-        }
-        skipCloudSave.current = false;
-      } finally {
-        setCloudSyncing(false);
+      const runCloudPull = () => {
+        setCloudRefreshing(true);
+        setCloudPullError('');
+        loadTeamWorkspace(candidate)
+          .catch((err) => {
+            if (!err.needsTeam) {
+              setCloudPullError(err.message || 'Не удалось загрузить облако');
+              if (!hasCachedRows) {
+                setCloudStatus('Не удалось загрузить облако — показаны локальные данные');
+              }
+            }
+          })
+          .finally(() => setCloudRefreshing(false));
+      };
+
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(runCloudPull, { timeout: hasCachedRows ? 4000 : 100 });
+      } else {
+        setTimeout(runCloudPull, hasCachedRows ? 300 : 0);
       }
     }
     syncCloud();
@@ -1285,7 +1325,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (cloudSyncing || suppressAutoSyncRef.current || loading || enriching || !activeProfile?.token) {
+    if (cloudSyncing || suppressAutoSyncRef.current || loading || enriching || !hasOwnWbToken) {
       return;
     }
     if (!baseRows.length) return;
@@ -1314,7 +1354,7 @@ export default function App() {
         ? 'full'
         : 'quick'
     );
-  }, [cloudSyncing, loading, enriching, activeProfile?.token, baseRows, meta, runSync]);
+  }, [cloudSyncing, loading, enriching, hasOwnWbToken, baseRows, meta, runSync]);
 
   const syncActive = loading || enriching;
   const showSyncProgress = Boolean(syncSteps?.length && (syncActive || syncSteps.some((s) => s.status === 'error')));
@@ -1624,6 +1664,22 @@ export default function App() {
         </div>
       ) : null}
       {teamUrlMissing ? <TeamUrlBanner teamCode={team} onRestore={handleRestoreTeamUrl} /> : null}
+      {cloudPullError ? (
+        <div
+          className="border-b border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900 lg:px-6"
+          role="alert"
+        >
+          {cloudPullError}
+          <button
+            type="button"
+            className="ml-2 font-medium underline"
+            onClick={retryCloudPull}
+            disabled={cloudRefreshing}
+          >
+            {cloudRefreshing ? 'Загрузка…' : 'Повторить'}
+          </button>
+        </div>
+      ) : null}
       {error ? (
         <WbTokenBanner message={error} onOpenData={() => changeSection('data')} />
       ) : null}

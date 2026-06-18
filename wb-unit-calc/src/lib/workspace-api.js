@@ -65,7 +65,7 @@ async function readJson(response) {
   }
 }
 
-const WORKSPACE_FETCH_MS = 12000;
+const WORKSPACE_FETCH_MS = 30000;
 
 export async function fetchWorkspace(team) {
   const code = String(team || '').trim();
@@ -85,7 +85,7 @@ export async function fetchWorkspace(team) {
     response = await fetch(url, { signal: controller.signal });
   } catch (err) {
     if (err?.name === 'AbortError') {
-      throw new Error('Облако не ответило за 12 с — показаны локальные данные');
+      throw new Error('Облако не ответило за 30 с — показаны локальные данные');
     }
     throw err;
   } finally {
@@ -101,11 +101,24 @@ export async function fetchWorkspace(team) {
 }
 
 export async function createWorkspace({ name, payload }) {
-  const response = await fetch(apiUrl('/api/unit-calc/workspace'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'create', name, payload }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), WORKSPACE_FETCH_MS);
+  let response;
+  try {
+    response = await fetch(apiUrl('/api/unit-calc/workspace'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create', name, payload }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Облако не ответило за 30 с — попробуйте ещё раз');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const data = await readJson(response);
 
@@ -120,7 +133,7 @@ export async function createWorkspace({ name, payload }) {
 
 export async function saveWorkspaceRemote(team, payload) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), WORKSPACE_FETCH_MS);
   try {
     const response = await fetch(apiUrl('/api/unit-calc/workspace'), {
       method: 'PUT',
@@ -133,7 +146,7 @@ export async function saveWorkspaceRemote(team, payload) {
     return data;
   } catch (err) {
     if (err?.name === 'AbortError') {
-      throw new Error('Облако не ответило за 15 с — данные сохранены локально');
+      throw new Error('Облако не ответило за 30 с — данные сохранены локально');
     }
     throw err;
   } finally {
