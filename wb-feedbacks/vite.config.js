@@ -14,6 +14,8 @@ const API_ROUTES = {
   '/api/feedbacks/feedback-draft': () => import('../api/feedbacks/feedback-draft.js'),
   '/api/feedbacks/feedbacks-check': () => import('../api/feedbacks/feedbacks-check.js'),
   '/api/feedbacks/ai-config-check': () => import('../api/feedbacks/ai-config-check.js'),
+  '/api/feedbacks/auto-reply-batch': () => import('../api/feedbacks/auto-reply-batch.js'),
+  '/api/cron/auto-reply': () => import('../api/cron/auto-reply.js'),
 };
 
 function feedbacksApiPlugin() {

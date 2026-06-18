@@ -27,6 +27,14 @@
 
 Проверка категорий токена WB.
 
+### `GET|POST /api/feedbacks/auto-reply-batch`
+
+Один цикл автоответа на сервере (для cron). Требует `WB_API_TOKEN` в env.
+
+### `GET /api/cron/auto-reply`
+
+Vercel Cron: вызывает `auto-reply-batch` каждые 6 минут, если задан `WB_API_TOKEN`.
+
 ## Локальная разработка
 
 Маршруты в `wb-feedbacks/vite.config.js`, порт **5175**.

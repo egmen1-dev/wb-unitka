@@ -17,8 +17,20 @@
     },
     "api/feedbacks/version.js": {
       "maxDuration": 10
+    },
+    "api/feedbacks/auto-reply-batch.js": {
+      "maxDuration": 60
+    },
+    "api/cron/auto-reply.js": {
+      "maxDuration": 60
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/auto-reply",
+      "schedule": "*/6 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

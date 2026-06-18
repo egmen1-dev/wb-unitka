@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { APP_BUILD } from '../lib/app-build';
+import {
+  AUTO_REPLY_MAX_PER_HOUR,
+  createAutoReplyScheduler,
+  formatMinutes,
+  getAutoReplyLog,
+  getMsUntilNextSlot,
+  getSentThisHour,
+  loadAutoReplyEnabled,
+  saveAutoReplyEnabled,
+} from '../lib/auto-reply-scheduler';
 import { fmtMoney } from '../lib/format';
 import { DEFAULT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from '../lib/http';
 import { EXPECTED_PROMPT_VERSION, PROMPT_BADGE_LABEL } from '../lib/prompt-meta';
@@ -411,6 +421,44 @@ function formatDraftStatus(payload, { regenerate = false } = {}) {
   return `Черновик по шаблону (${label})`;
 }
 
+function formatAutoReplyTime(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function AutoReplyLogEntry({ entry }) {
+  const statusClass =
+    entry.status === 'отправлен'
+      ? 'text-emerald-700'
+      : entry.status === 'пропущен'
+        ? 'text-amber-700'
+        : 'text-rose-700';
+  return (
+    <li className="border-b border-slate-100 py-2 last:border-0">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-slate-500">{formatAutoReplyTime(entry.at)}</span>
+        <span className={`font-medium ${statusClass}`}>{entry.status}</span>
+        {entry.rating ? <Stars rating={entry.rating} /> : null}
+      </div>
+      <p className="mt-0.5 text-xs text-slate-700">{entry.productName || entry.feedbackId || '—'}</p>
+      {entry.preview ? (
+        <p className="mt-0.5 text-xs italic text-slate-500">«{entry.preview}…»</p>
+      ) : entry.reason ? (
+        <p className="mt-0.5 text-xs text-slate-500">{entry.reason}</p>
+      ) : null}
+    </li>
+  );
+}
+
 function formatApiError(payload, status, fallback = 'Не удалось загрузить отзывы') {
   if (status === 401) return '401 токен отозван';
   const rateMsg = formatRateLimitError(payload, status);
@@ -445,6 +493,15 @@ export default function FeedbacksPanel({ token }) {
     endpoint: '',
   });
   const [cacheBadge, setCacheBadge] = useState('');
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(() => loadAutoReplyEnabled());
+  const [autoReplyState, setAutoReplyState] = useState({
+    sentThisHour: getSentThisHour(),
+    nextInMs: getMsUntilNextSlot(),
+    log: getAutoReplyLog(),
+    status: '',
+    running: false,
+  });
+  const autoReplyRef = useRef(null);
   const loadAttemptRef = useRef(0);
   const hasDataRef = useRef(false);
   const dataRef = useRef(null);
@@ -847,6 +904,55 @@ export default function FeedbacksPanel({ token }) {
     [token, drafts, loadFeedbacks, restoreCachedList]
   );
 
+  useEffect(() => {
+    autoReplyRef.current?.destroy();
+    autoReplyRef.current = null;
+
+    if (!token || !autoReplyEnabled) {
+      setAutoReplyState((prev) => ({
+        ...prev,
+        sentThisHour: getSentThisHour(),
+        nextInMs: getMsUntilNextSlot(),
+        log: getAutoReplyLog(),
+        running: false,
+        status: autoReplyEnabled ? '' : 'остановлен',
+      }));
+      return undefined;
+    }
+
+    const scheduler = createAutoReplyScheduler({
+      token,
+      getFeedbacks: () => dataRef.current?.feedbacks || [],
+      onState: (state) => setAutoReplyState((prev) => ({ ...prev, ...state })),
+      onAfterSend: () => loadFeedbacks({ force: true }),
+    });
+    autoReplyRef.current = scheduler;
+    scheduler.start();
+
+    return () => scheduler.destroy();
+  }, [token, autoReplyEnabled, loadFeedbacks]);
+
+  useEffect(() => {
+    if (!autoReplyEnabled) return undefined;
+    const timer = setInterval(() => {
+      setAutoReplyState((prev) => ({
+        ...prev,
+        sentThisHour: getSentThisHour(),
+        nextInMs: getMsUntilNextSlot(),
+      }));
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [autoReplyEnabled]);
+
+  const toggleAutoReply = useCallback(() => {
+    const next = !autoReplyEnabled;
+    setAutoReplyEnabled(next);
+    saveAutoReplyEnabled(next);
+    if (!next) {
+      autoReplyRef.current?.stop();
+    }
+  }, [autoReplyEnabled]);
+
   const feedbacks = data?.feedbacks || [];
   const countUnanswered = data?.countUnanswered ?? 0;
   const hasMore = countUnanswered > feedbacks.length || (data?.hasMore ?? false);
@@ -885,7 +991,8 @@ export default function FeedbacksPanel({ token }) {
               ) : null}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              AI-черновики с апселлом. Предпросмотр и перегенерация — отправка только вручную.
+              AI-черновики с апселлом. Автоответчик — до {AUTO_REPLY_MAX_PER_HOUR} отзывов в час с проверкой
+              manager-v9.
             </p>
           </div>
           <button
@@ -984,6 +1091,80 @@ export default function FeedbacksPanel({ token }) {
           </div>
         ) : null}
         {status ? <p className="mt-2 text-xs text-slate-600">{status}</p> : null}
+      </section>
+
+      <section className="panel">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800">Автоответчик</h2>
+            <p className="mt-1 text-xs text-slate-600">
+              Пока вкладка открыта: черновик YandexGPT → валидация → ответ в WB. Не более{' '}
+              {AUTO_REPLY_MAX_PER_HOUR}/час (~1 каждые 6 мин).
+            </p>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+            <span>{autoReplyEnabled ? 'Вкл' : 'Выкл'}</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoReplyEnabled}
+              className={`relative h-7 w-12 rounded-full transition-colors ${
+                autoReplyEnabled ? 'bg-brand-600' : 'bg-slate-300'
+              }`}
+              onClick={toggleAutoReply}
+            >
+              <span
+                className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                  autoReplyEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          </label>
+        </div>
+
+        <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+          <p>
+            <span className="font-medium text-slate-700">Лимит: </span>
+            {AUTO_REPLY_MAX_PER_HOUR} отзывов/час
+          </p>
+          <p>
+            <span className="font-medium text-slate-700">Отправлено за час: </span>
+            {autoReplyState.sentThisHour} / {AUTO_REPLY_MAX_PER_HOUR}
+          </p>
+          <p>
+            <span className="font-medium text-slate-700">Следующий: </span>
+            {autoReplyEnabled
+              ? autoReplyState.running
+                ? 'сейчас…'
+                : formatMinutes(autoReplyState.nextInMs) > 0
+                  ? `через ${formatMinutes(autoReplyState.nextInMs)} мин`
+                  : 'скоро'
+              : '—'}
+          </p>
+        </div>
+
+        {autoReplyEnabled && autoReplyState.status ? (
+          <p className="mt-2 text-xs text-brand-700">{autoReplyState.status}</p>
+        ) : null}
+
+        {!autoReplyEnabled ? (
+          <p className="mt-2 text-xs text-slate-500">
+            Включите переключатель — нужен токен WB и YandexGPT на сервере. Вкладку держите открытой.
+          </p>
+        ) : null}
+
+        {autoReplyState.log?.length ? (
+          <details className="mt-3" open={autoReplyEnabled}>
+            <summary className="cursor-pointer text-xs font-medium text-slate-700">
+              Журнал автоответов ({autoReplyState.log.length})
+            </summary>
+            <ul className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50 px-3 py-1">
+              {autoReplyState.log.map((entry, index) => (
+                <AutoReplyLogEntry key={`${entry.at}-${entry.feedbackId || index}`} entry={entry} />
+              ))}
+            </ul>
+          </details>
+        ) : null}
       </section>
 
       {!loading && feedbacks.length === 0 && !error ? (
