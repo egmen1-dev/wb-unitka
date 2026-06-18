@@ -1,3 +1,5 @@
+import { migrateStoredSettings } from '@lib/unit-economics/settings.js';
+
 const KEYS = {
   profiles: 'wb-unit-calc:profiles',
   activeProfileId: 'wb-unit-calc:active-profile',
@@ -51,7 +53,8 @@ export function savePurchases(purchases) {
 }
 
 export function loadSettings() {
-  return readJson(KEYS.settings, null);
+  const raw = readJson(KEYS.settings, null);
+  return raw ? migrateStoredSettings(raw) : null;
 }
 
 export function saveSettings(settings) {

@@ -607,13 +607,16 @@ function ProductsTable({
                     col.key === 'draftMarginFbs'
                   ) {
                     className = marginClass(raw);
-                  } else if (
+                  } else                   if (
                     col.key === 'profitFbo' ||
                     col.key === 'profitFbs' ||
                     col.key === 'draftProfitFbo' ||
                     col.key === 'draftProfitFbs'
                   ) {
                     className = profitClass(raw);
+                    if (!row.purchasePrice && (col.key === 'profitFbo' || col.key === 'profitFbs')) {
+                      title = 'Укажите закупку — без неё прибыль не считается';
+                    }
                   }
 
                   let title = col.hint;
