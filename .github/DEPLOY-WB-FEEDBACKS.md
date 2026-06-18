@@ -72,7 +72,7 @@ npm run deploy:feedbacks
 # Версия API (commit, prompt, время сборки)
 curl -s https://wb-feedbacks.vercel.app/api/feedbacks/version
 
-# Должно быть manager-v3 и актуальный commitSha (7 символов)
+# Должно быть manager-v4 и актуальный commitSha (7 символов)
 curl -s https://wb-feedbacks.vercel.app/api/feedbacks/ai-config-check
 
 # Имя JS-бандла (меняется при каждой сборке)
@@ -82,9 +82,9 @@ curl -s https://wb-feedbacks.vercel.app/ | grep -o 'assets/index-[^"]*\.js'
 | Проверка | Ожидание |
 |----------|----------|
 | `/api/feedbacks/version` → `commitSha` | совпадает с `git rev-parse --short HEAD` на main |
-| `/api/feedbacks/version` → `promptVersion` | `manager-v3` |
+| `/api/feedbacks/version` → `promptVersion` | `manager-v4` |
 | Footer в UI | `commit <sha>` |
-| Бейдж промпта | «Промпт: менеджер WB v3» |
+| Бейдж промпта | «Промпт: менеджер WB v4» |
 
 ---
 
