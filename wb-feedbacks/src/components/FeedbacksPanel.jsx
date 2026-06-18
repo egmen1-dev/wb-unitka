@@ -79,6 +79,29 @@ function managerLabelTone(label) {
   return 'neutral';
 }
 
+function GenderBadge({ gender, source, label }) {
+  if (!gender || gender === 'unknown') return null;
+  const short = gender === 'female' ? 'ж' : gender === 'male' ? 'м' : null;
+  if (!short) return null;
+  const title =
+    label && source === 'name'
+      ? `Пол: ${label} (определён по имени)`
+      : label
+        ? `Пол: ${label}`
+        : gender === 'female'
+          ? 'Женский пол'
+          : 'Мужской пол';
+  const className =
+    gender === 'female'
+      ? 'bg-fuchsia-100 text-fuchsia-800'
+      : 'bg-sky-100 text-sky-800';
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${className}`} title={title}>
+      {short}
+    </span>
+  );
+}
+
 function ScenarioBadge({ scenario }) {
   const displayLabel = scenario?.managerLabel || scenario?.label;
   if (!displayLabel) return null;
@@ -969,6 +992,11 @@ export default function FeedbacksPanel({ token }) {
                     <Stars rating={fb.rating} />
                     <span className="text-xs text-slate-500">{formatDate(fb.createdDate)}</span>
                     {fb.userName ? <span className="text-xs text-slate-500">· {fb.userName}</span> : null}
+                    <GenderBadge
+                      gender={fb.buyerGender}
+                      source={fb.buyerGenderSource}
+                      label={fb.buyerGenderLabel}
+                    />
                   </div>
                   <p className="mt-1 text-sm font-medium text-slate-800">
                     {fb.productName || 'Товар'}

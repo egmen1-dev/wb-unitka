@@ -275,6 +275,7 @@ export default async function handler(req, res) {
     variationSeed,
     regenerate,
     buyerName: feedback?.userName || null,
+    buyerGender: feedback?.buyerGender || null,
   });
   const userPrompt = buildReviewUserMessage({ feedback });
 
