@@ -51,6 +51,15 @@ export function buildShareUrl(teamCode) {
   return url.toString();
 }
 
+function wrapFetchError(err, fallback) {
+  if (err?.name === 'AbortError') return err;
+  const msg = String(err?.message || '');
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
+    return new Error('Нет связи с облаком — данные сохранены на устройстве');
+  }
+  return new Error(fallback || msg || 'Не удалось связаться с облаком');
+}
+
 async function readJson(response) {
   const text = await response.text();
   if (!text) return {};
@@ -58,6 +67,9 @@ async function readJson(response) {
     return JSON.parse(text);
   } catch {
     const preview = text.replace(/\s+/g, ' ').slice(0, 120);
+    if (response.status === 413) {
+      throw new Error('Слишком большой объём данных для облака');
+    }
     if (response.status >= 500) {
       throw new Error('Облако временно недоступно. Данные сохранены локально.');
     }
@@ -87,7 +99,7 @@ export async function fetchWorkspace(team) {
     if (err?.name === 'AbortError') {
       throw new Error('Облако не ответило за 30 с — показаны локальные данные');
     }
-    throw err;
+    throw wrapFetchError(err, 'Не удалось загрузить облако');
   } finally {
     clearTimeout(timeout);
   }
@@ -95,6 +107,7 @@ export async function fetchWorkspace(team) {
   if (!response.ok) {
     const error = new Error(data.error || `Ошибка ${response.status}`);
     error.needsTeam = data.needsTeam;
+    if (response.status === 404) error.needsTeam = true;
     throw error;
   }
   return data;
@@ -115,7 +128,7 @@ export async function createWorkspace({ name, payload }) {
     if (err?.name === 'AbortError') {
       throw new Error('Облако не ответило за 30 с — попробуйте ещё раз');
     }
-    throw err;
+    throw wrapFetchError(err, 'Не удалось создать команду');
   } finally {
     clearTimeout(timeout);
   }
@@ -132,23 +145,35 @@ export async function createWorkspace({ name, payload }) {
 }
 
 export async function saveWorkspaceRemote(team, payload) {
+  const code = String(team || '').trim();
+  if (!code) {
+    const error = new Error('Нет кода команды — войдите в команду или создайте новую');
+    error.needsTeam = true;
+    throw error;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), WORKSPACE_FETCH_MS);
   try {
     const response = await fetch(apiUrl('/api/unit-calc/workspace'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ team, payload }),
+      body: JSON.stringify({ team: code, payload }),
       signal: controller.signal,
     });
     const data = await readJson(response);
-    if (!response.ok) throw new Error(data.error || `Ошибка ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(data.error || `Ошибка ${response.status}`);
+      if (response.status === 404) error.needsTeam = true;
+      throw error;
+    }
     return data;
   } catch (err) {
     if (err?.name === 'AbortError') {
       throw new Error('Облако не ответило за 30 с — данные сохранены локально');
     }
-    throw err;
+    if (err?.needsTeam) throw err;
+    throw wrapFetchError(err, 'Не удалось сохранить в облако');
   } finally {
     clearTimeout(timeout);
   }

@@ -98,6 +98,27 @@ function applyWbAuthError(err, { setError, setTokenInvalid }) {
   return authError;
 }
 
+function formatCloudSaveError(err) {
+  const msg = String(err?.message || 'неизвестная ошибка');
+  if (err?.needsTeam || /код команды|команда не найдена/i.test(msg)) {
+    return 'Нет команды в облаке — создайте или войдите по коду';
+  }
+  if (/30 с|не ответило/i.test(msg)) {
+    return 'Облако не ответило вовремя — данные на устройстве, повторим позже';
+  }
+  if (/связи с облаком|failed to fetch/i.test(msg)) {
+    return 'Нет связи с облаком — данные на устройстве';
+  }
+  if (/недоступн|503|postgres/i.test(msg)) {
+    return msg;
+  }
+  return `Не удалось сохранить: ${msg}`;
+}
+
+const CLOUD_SAVE_DEBOUNCE_MS = 3500;
+const CLOUD_SAVE_RETRY_MS = 2000;
+const CLOUD_SAVE_MAX_ATTEMPTS = 3;
+
 function readBootCache() {
   const urlTeam = getTeamFromUrl();
   const storedTeam = loadStoredTeam() || '';
@@ -421,6 +442,8 @@ export default function App() {
   const [highlightNmId, setHighlightNmId] = useState(null);
   const [dashboardQuery, setDashboardQuery] = useState('');
   const skipCloudSave = useRef(true);
+  const cloudBootstrappedRef = useRef(false);
+  const cloudSaveGenRef = useRef(0);
   const syncRunId = useRef(0);
   const persistTimer = useRef(null);
   const baseRowsRef = useRef(baseRows);
@@ -530,6 +553,7 @@ export default function App() {
   }, []);
 
   const pushToCloud = useCallback(async (overrides = {}) => {
+    const { notify = 'none', ...payloadOverrides } = overrides;
     if (!team || skipCloudSave.current) return;
 
     const accessForCloud = isTeamCreator
@@ -540,8 +564,8 @@ export default function App() {
       setTeamAccess(accessForCloud);
     }
 
-    const profilesForCloud = overrides.profiles ?? profiles;
-    const activeForCloud = overrides.activeProfileId ?? activeProfileId;
+    const profilesForCloud = payloadOverrides.profiles ?? profiles;
+    const activeForCloud = payloadOverrides.activeProfileId ?? activeProfileId;
 
     const payload = buildWorkspacePayload({
       profiles: profilesForCloud,
@@ -558,10 +582,24 @@ export default function App() {
       ownerClientId: ownerClientIdForPayload(ownerClientId),
       teamAccess: accessForCloud,
     });
-    await saveWorkspaceRemote(team, payload);
-    const updatedAt = new Date().toISOString();
-    setWorkspaceUpdatedAt(updatedAt);
-    saveWorkspaceSnapshot(team, { payload, updatedAt, name: teamName });
+
+    setCloudSyncing(true);
+    try {
+      await saveWorkspaceRemote(team, payload);
+      const updatedAt = new Date().toISOString();
+      setWorkspaceUpdatedAt(updatedAt);
+      saveWorkspaceSnapshot(team, { payload, updatedAt, name: teamName });
+      if (notify !== 'none') {
+        setCloudStatus('Сохранено в облако');
+      }
+    } catch (err) {
+      if (notify === 'all') {
+        setCloudStatus(formatCloudSaveError(err));
+      }
+      throw err;
+    } finally {
+      setCloudSyncing(false);
+    }
   }, [
     team,
     teamName,
@@ -654,6 +692,7 @@ export default function App() {
     }
     ensureTeamInUrl(data.teamCode);
     setTeamUrlMissing(false);
+    cloudBootstrappedRef.current = true;
     skipCloudSave.current = false;
     setCloudStatus(`Команда «${data.name || data.teamCode}»`);
   }, [refreshTeamWorkspace, workspaceUpdatedAt]);
@@ -752,6 +791,7 @@ export default function App() {
     async function syncCloud() {
       const candidate = getTeamFromUrl() || loadStoredTeam();
       if (!candidate) {
+        cloudBootstrappedRef.current = true;
         skipCloudSave.current = false;
         return;
       }
@@ -760,7 +800,7 @@ export default function App() {
       ensureTeamInUrl(candidate);
 
       const hasCachedRows = Boolean(bootPayload?.cache?.rows?.length);
-      skipCloudSave.current = false;
+      skipCloudSave.current = true;
       if (hasCachedRows || bootPayload?.cache?.syncedAt) {
         suppressAutoSyncRef.current = true;
       }
@@ -777,7 +817,11 @@ export default function App() {
               }
             }
           })
-          .finally(() => setCloudRefreshing(false));
+          .finally(() => {
+            setCloudRefreshing(false);
+            cloudBootstrappedRef.current = true;
+            skipCloudSave.current = false;
+          });
       };
 
       if (typeof requestIdleCallback === 'function') {
@@ -818,16 +862,36 @@ export default function App() {
   }, [loading, enriching, wbProductCache]);
 
   useEffect(() => {
-    if (!team || loading || enriching || cloudSyncing) return undefined;
-    const timer = setTimeout(() => {
-      pushToCloud().catch((err) => setCloudStatus(`Ошибка сохранения: ${err.message}`));
-    }, 3500);
-    return () => clearTimeout(timer);
+    if (!team || loading || enriching || cloudSyncing || cloudRefreshing) return undefined;
+    if (!cloudBootstrappedRef.current || skipCloudSave.current) return undefined;
+
+    const generation = ++cloudSaveGenRef.current;
+    const timer = setTimeout(async () => {
+      if (generation !== cloudSaveGenRef.current) return;
+
+      for (let attempt = 0; attempt < CLOUD_SAVE_MAX_ATTEMPTS; attempt += 1) {
+        if (generation !== cloudSaveGenRef.current) return;
+        try {
+          await pushToCloud({ notify: 'success' });
+          return;
+        } catch {
+          if (attempt < CLOUD_SAVE_MAX_ATTEMPTS - 1) {
+            await new Promise((resolve) => setTimeout(resolve, CLOUD_SAVE_RETRY_MS * (attempt + 1)));
+          }
+        }
+      }
+    }, CLOUD_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      cloudSaveGenRef.current += 1;
+      clearTimeout(timer);
+    };
   }, [
     team,
     loading,
     enriching,
     cloudSyncing,
+    cloudRefreshing,
     pushToCloud,
   ]);
 
@@ -1294,13 +1358,17 @@ export default function App() {
 
       if (team && !skipCloudSave.current) {
         try {
-          await pushToCloud({ profiles: nextProfiles, activeProfileId: nextActive });
+          await pushToCloud({
+            profiles: nextProfiles,
+            activeProfileId: nextActive,
+            notify: 'none',
+          });
           deletedProfileIdsRef.current = pruneDeletedProfileIds(
             deletedProfileIdsRef.current,
             nextProfiles.map((p) => p.id)
           );
         } catch (err) {
-          setCloudStatus(`Профиль удалён локально; облако: ${err.message}`);
+          setCloudStatus(`Профиль удалён локально; ${formatCloudSaveError(err)}`);
         }
       }
     },
@@ -1441,6 +1509,7 @@ export default function App() {
     markTeamOwner(created.teamCode, newOwnerId);
     ensureTeamInUrl(created.teamCode);
     setTeamUrlMissing(false);
+    cloudBootstrappedRef.current = true;
     skipCloudSave.current = false;
     setCloudStatus(`Новая команда «${created.name || name}» · код ${created.teamCode}`);
 
