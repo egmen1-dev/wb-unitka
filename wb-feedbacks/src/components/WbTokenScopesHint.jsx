@@ -45,7 +45,6 @@ export default function WbTokenScopesHint({
   collapsible = false,
   defaultOpen = false,
   showCheckButton = true,
-  autoCheckOnLoad = false,
   className = '',
   title = 'Категории токена WB',
 }) {
@@ -69,7 +68,7 @@ export default function WbTokenScopesHint({
     }
 
     if (!force) {
-      const cached = getCachedScopeCheck();
+      const cached = getCachedScopeCheck(token);
       if (cached) {
         setCheckResult(cached);
         return;
@@ -97,7 +96,7 @@ export default function WbTokenScopesHint({
         throw new Error(payload.error || 'Проверка не удалась');
       }
       setCheckResult(payload);
-      setCachedScopeCheck(payload);
+      setCachedScopeCheck(token, payload);
     } catch (err) {
       if (isRateLimitError(err)) {
         const sec = Number(err.retryAfterSec) || 5;
@@ -113,17 +112,22 @@ export default function WbTokenScopesHint({
   }, [token]);
 
   useEffect(() => {
-    if (!autoCheckOnLoad || !token) return undefined;
-
-    const cached = getCachedScopeCheck();
-    if (cached) {
-      setCheckResult(cached);
+    if (!token) {
+      setCheckResult(null);
+      setCheckError('');
       return undefined;
     }
 
-    const timer = setTimeout(() => runCheck(), 3000);
+    const cached = getCachedScopeCheck(token);
+    if (cached) {
+      setCheckResult(cached);
+      setCheckError('');
+      return undefined;
+    }
+
+    const timer = setTimeout(() => runCheck(), 500);
     return () => clearTimeout(timer);
-  }, [autoCheckOnLoad, token, runCheck]);
+  }, [token, runCheck]);
 
   useEffect(() => {
     if (!pendingCheckRef.current || checking || !token) return undefined;
@@ -218,7 +222,7 @@ export default function WbTokenScopesHint({
             disabled={checking || !token}
             onClick={() => runCheck({ force: true })}
           >
-            {checking ? 'Проверка…' : 'Проверить права токена'}
+            {checking ? 'Проверка…' : checkResult ? 'Проверить снова' : 'Проверить права токена'}
           </button>
           {checkResult?.summary ? (
             <span

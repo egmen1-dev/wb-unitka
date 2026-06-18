@@ -1,10 +1,9 @@
 const STORAGE_KEY = 'wb-feedbacks:reviews-cache';
+const SCOPE_CHECK_STORAGE_KEY = 'wb-feedbacks:scope-check';
 const COUNT_TTL_MS = 5 * 60_000;
 const REVIEWS_TTL_MS = 10 * 60_000;
-const SCOPE_TTL_MS = 90_000;
 
 let countCache = null;
-let scopeCheckCache = null;
 let readRateLimitUntil = 0;
 let writeRateLimitUntil = 0;
 
@@ -195,14 +194,42 @@ export function clearFeedbacksRateLimit(kind) {
   clearRateLimitSlot(kind);
 }
 
-export function getCachedScopeCheck() {
-  if (!scopeCheckCache) return null;
-  if (Date.now() - scopeCheckCache.at > SCOPE_TTL_MS) return null;
-  return scopeCheckCache.value;
+function readScopeCheckEntry() {
+  try {
+    const raw = localStorage.getItem(SCOPE_CHECK_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
-export function setCachedScopeCheck(result) {
-  scopeCheckCache = { value: result, at: Date.now() };
+/** Cached scope check for token — no TTL, invalidated only when token changes. */
+export function getCachedScopeCheck(token) {
+  const fp = tokenFingerprint(token);
+  if (!fp) return null;
+
+  const entry = readScopeCheckEntry();
+  if (!entry || entry.tokenHash !== fp || !entry.result) return null;
+  return entry.result;
+}
+
+export function setCachedScopeCheck(token, result) {
+  const fp = tokenFingerprint(token);
+  if (!fp || !result) return;
+
+  try {
+    localStorage.setItem(
+      SCOPE_CHECK_STORAGE_KEY,
+      JSON.stringify({
+        tokenHash: fp,
+        result,
+        checkedAt: Date.now(),
+      })
+    );
+  } catch {
+    // private mode / quota
+  }
 }
 
 export { REVIEWS_TTL_MS };
