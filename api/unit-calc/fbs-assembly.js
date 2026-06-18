@@ -6,6 +6,7 @@ import {
   groupOrdersForSupplies,
   summarizeFbsAssembly,
 } from '../../lib/wb-fbs-assembly.js';
+import { parseWbAuthErrorFromMessage } from '../../lib/wb-auth-error.js';
 
 function readToken(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
@@ -116,6 +117,19 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error('[unit-calc/fbs-assembly]', error);
     const message = error.message || 'Ошибка FBS API';
+    const authError =
+      (error.wbAuthKind && {
+        kind: error.wbAuthKind,
+        message: error.message,
+        code: error.code,
+      }) ||
+      parseWbAuthErrorFromMessage(message);
+    if (authError) {
+      return res.status(401).json({
+        error: authError.message,
+        code: authError.code || (authError.kind === 'withdrawn' ? 'WB_TOKEN_WITHDRAWN' : 'WB_TOKEN_UNAUTHORIZED'),
+      });
+    }
     const status = /401|403/.test(message) ? 403 : 500;
     return res.status(status).json({
       error: message,

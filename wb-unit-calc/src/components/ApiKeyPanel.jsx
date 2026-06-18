@@ -13,6 +13,8 @@ export default function ApiKeyPanel({
   onActiveChange,
   onProfileAdded,
   teamMode = false,
+  tokenInvalid = false,
+  tokenInvalidMessage = '',
 }) {
   const [name, setName] = useState('');
   const [token, setToken] = useState('');
@@ -50,10 +52,15 @@ export default function ApiKeyPanel({
   }
 
   return (
-    <section className="panel">
+    <section className={`panel ${tokenInvalid ? 'border-rose-400 ring-2 ring-rose-200' : ''}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-slate-800">API-ключи WB</h2>
+          {tokenInvalid ? (
+            <p className="mt-1 text-xs font-medium text-rose-700">
+              {tokenInvalidMessage || 'Токен отклонён WB — замените ключ ниже'}
+            </p>
+          ) : null}
           <p className="mt-1 text-xs text-slate-500">
             {teamMode
               ? 'Общие для команды — видны всем по ссылке. После сохранения ключ автоматически запускает загрузку.'
@@ -73,7 +80,7 @@ export default function ApiKeyPanel({
           </p>
         </div>
         <button type="button" className="btn-secondary" onClick={() => setShowForm((v) => !v)}>
-          {showForm ? 'Скрыть' : '+ Добавить ключ'}
+          {showForm ? 'Скрыть' : tokenInvalid ? 'Заменить токен' : '+ Добавить ключ'}
         </button>
       </div>
 
@@ -84,7 +91,9 @@ export default function ApiKeyPanel({
               key={profile.id}
               className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
                 profile.id === active?.id
-                  ? 'border-brand-500 bg-brand-50'
+                  ? tokenInvalid && profile.id === active?.id
+                    ? 'border-rose-500 bg-rose-50'
+                    : 'border-brand-500 bg-brand-50'
                   : 'border-slate-200 bg-slate-50'
               }`}
             >

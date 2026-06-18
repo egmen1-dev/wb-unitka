@@ -13,6 +13,7 @@ import RegionsPanel from './components/RegionsPanel';
 import ReturnsPanel from './components/ReturnsPanel';
 import FbsAssemblyPanel from './components/FbsAssemblyPanel';
 import FeedbacksExternalLink from './components/FeedbacksExternalLink';
+import WbTokenBanner from './components/WbTokenBanner';
 import SupplierPricePanel from './components/SupplierPricePanel';
 import TeamPanel from './components/TeamPanel';
 import TeamPermissionsPanel from './components/TeamPermissionsPanel';
@@ -77,6 +78,15 @@ import { createRecalcRows } from './lib/recalc-rows-cache';
 import { setProductOverride } from './lib/product-overrides';
 import { readJsonResponse } from './lib/http';
 import { isAdvertRateLimitMessage } from '@lib/wb-advert-stats.js';
+import { parseWbAuthErrorFromMessage } from '@lib/wb-auth-error.js';
+
+function applyWbAuthError(err, { setError, setTokenInvalid }) {
+  const authError = parseWbAuthErrorFromMessage(err?.message);
+  const message = authError?.message || err?.message || 'Ошибка';
+  if (authError) setTokenInvalid(true);
+  setError(message);
+  return authError;
+}
 
 function readBootCache() {
   const team = getTeamFromUrl() || loadStoredTeam() || '';
@@ -129,7 +139,9 @@ async function syncFromWb({
 
     const { data } = await readJsonResponse(response);
     if (!response.ok) {
-      throw new Error(data.error || `Ошибка ${response.status}`);
+      const err = new Error(data.error || `Ошибка ${response.status}`);
+      err.code = data.code;
+      throw err;
     }
     return data;
   } catch (err) {
@@ -343,6 +355,7 @@ export default function App() {
   const [syncPartialReady, setSyncPartialReady] = useState(false);
   const [syncHint, setSyncHint] = useState('');
   const [error, setError] = useState('');
+  const [tokenInvalid, setTokenInvalid] = useState(false);
   const [detailRow, setDetailRow] = useState(null);
   const [marginFilter, setMarginFilter] = useState(null);
   const [brandFilter, setBrandFilter] = useState([]);
@@ -877,6 +890,7 @@ export default function App() {
       setLoading(true);
       setEnriching(false);
       setError('');
+      setTokenInvalid(false);
       setSyncPartialReady(false);
       setSyncStartedAt(Date.now());
       let steps = createSyncSteps();
@@ -1071,6 +1085,8 @@ export default function App() {
           status: 'done',
           detail: enrichDetail || `${data.total} товаров обновлено`,
         }, { force: true });
+        setTokenInvalid(false);
+        setError('');
       } catch (err) {
         if (isStale()) return;
         const failedStep = steps.find((s) => s.status === 'running')?.id || 'enrich';
@@ -1080,8 +1096,9 @@ export default function App() {
         }, { force: true });
         if (partialReady || baseRows.length > 0) {
           setCloudStatus(`Частичная загрузка: ${err.message}. Нажмите «Быстро» для повтора.`);
+          applyWbAuthError(err, { setError, setTokenInvalid });
         } else {
-          setError(err.message || 'Не удалось загрузить данные');
+          applyWbAuthError(err, { setError, setTokenInvalid });
         }
       } finally {
         flushSyncUi(true);
@@ -1099,6 +1116,8 @@ export default function App() {
   const handleFullSync = useCallback(() => runSync('full'), [runSync]);
 
   const handleProfileAdded = useCallback(() => {
+    setTokenInvalid(false);
+    setError('');
     changeSection('data');
     runSync('quick');
   }, [runSync]);
@@ -1399,9 +1418,7 @@ export default function App() {
     >
       <UpdateBanner />
       {error ? (
-        <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-800 lg:px-6">
-          {error}
-        </div>
+        <WbTokenBanner message={error} onOpenData={() => changeSection('data')} />
       ) : null}
       {meta?.advertError ? (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 lg:px-6">
@@ -1622,6 +1639,8 @@ export default function App() {
             onActiveChange={setActiveProfileId}
             onProfileAdded={handleProfileAdded}
             teamMode={Boolean(team)}
+            tokenInvalid={tokenInvalid}
+            tokenInvalidMessage={error}
           />
           <SupplierPricePanel
             catalogState={supplierCatalogs}

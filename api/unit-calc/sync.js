@@ -5,6 +5,7 @@ import {
   deserializeSupplierIndex,
   fetchSupplierPriceIndex,
 } from '../../lib/supplier-price-list.js';
+import { parseWbAuthErrorFromMessage } from '../../lib/wb-auth-error.js';
 
 function readToken(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
@@ -128,6 +129,19 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('[unit-calc/sync]', error);
+    const authError =
+      (error.wbAuthKind && {
+        kind: error.wbAuthKind,
+        message: error.message,
+        code: error.code,
+      }) ||
+      parseWbAuthErrorFromMessage(error.message);
+    if (authError) {
+      return res.status(401).json({
+        error: authError.message,
+        code: authError.code || (authError.kind === 'withdrawn' ? 'WB_TOKEN_WITHDRAWN' : 'WB_TOKEN_UNAUTHORIZED'),
+      });
+    }
     return res.status(500).json({ error: error.message || 'Ошибка загрузки WB API' });
   }
 }
