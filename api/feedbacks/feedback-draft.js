@@ -297,6 +297,7 @@ export default async function handler(req, res) {
     premiumUpsell,
     reviewAsksContact: allowChat,
     managerStyle: true,
+    variationSeed,
   };
 
   let draft;
