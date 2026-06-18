@@ -8,9 +8,11 @@ import {
   listAlternativeCandidates,
   pickAlternativeProduct,
   pickPremiumUpsell,
+  reviewAsksContact,
+  validateDraftQuality,
   validateFeedbackAnswer,
 } from '../../lib/feedback-ai-prompt.js';
-import { completeYandexGpt, readYandexConfig } from '../../lib/yandex-gpt.js';
+import { completeYandexGpt, pickYandexModel, readYandexConfig } from '../../lib/yandex-gpt.js';
 import { serializeFeedback } from '../../lib/wb-feedbacks.js';
 
 function readToken(req) {
@@ -71,7 +73,7 @@ async function enrichProductFromContent(token, row, feedback) {
 }
 
 async function generateWithOpenAI(userPrompt, systemPrompt, apiKey, { regenerate = false } = {}) {
-  const temperature = regenerate ? 0.92 : 0.82;
+  const temperature = regenerate ? 0.95 : 0.88;
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -110,25 +112,85 @@ async function generateWithOpenAI(userPrompt, systemPrompt, apiKey, { regenerate
   return draft;
 }
 
-async function generateWithYandex(userPrompt, systemPrompt, { regenerate = false, variationSeed = null } = {}) {
-  const temperature = regenerate ? 0.92 : 0.78;
+async function generateWithYandex(userPrompt, systemPrompt, { regenerate = false, reviewLength = 0 } = {}) {
+  const temperature = regenerate ? 0.95 : 0.88;
+  const model = pickYandexModel(reviewLength);
   const { text } = await completeYandexGpt({
     system: systemPrompt,
     user: userPrompt,
     temperature,
-    maxTokens: 450,
+    maxTokens: 550,
+    model,
   });
   return text;
 }
 
-function buildTemplateFallback({ feedback, product, alternative, premiumUpsell, variationSeed }) {
-  return buildTemplateDraft({
-    feedback,
-    product,
-    alternative,
-    premiumUpsell,
-    variationSeed,
-  });
+function reviewCharCount(feedback) {
+  return [feedback?.text, feedback?.pros, feedback?.cons].filter(Boolean).join(' ').length;
+}
+
+async function generateDraftWithQuality({
+  userPrompt,
+  systemPrompt,
+  yandexConfigured,
+  openaiKey,
+  regenerate,
+  reviewLength,
+  templateArgs,
+  qualityContext,
+}) {
+  let draft;
+  let source;
+  let provider;
+  let qualityRetried = false;
+
+  const runAi = async (isRetry) => {
+    if (yandexConfigured) {
+      try {
+        draft = await generateWithYandex(userPrompt, systemPrompt, {
+          regenerate: isRetry || regenerate,
+          reviewLength,
+        });
+        source = isRetry || regenerate ? 'yandex-regen' : 'yandex';
+        provider = 'yandex';
+        return;
+      } catch (error) {
+        console.error('[feedbacks/feedback-draft] YandexGPT', error);
+        if (openaiKey) {
+          draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, {
+            regenerate: isRetry || regenerate,
+          });
+          source = isRetry || regenerate ? 'openai-regen' : 'openai';
+          provider = 'openai';
+          return;
+        }
+        throw error;
+      }
+    }
+    if (openaiKey) {
+      draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, {
+        regenerate: isRetry || regenerate,
+      });
+      source = isRetry || regenerate ? 'openai-regen' : 'openai';
+      provider = 'openai';
+      return;
+    }
+    draft = buildTemplateDraft(templateArgs);
+    source = 'template-fallback';
+    provider = 'template';
+  };
+
+  await runAi(false);
+
+  let quality = validateDraftQuality(draft, qualityContext);
+  if (!quality.ok && provider !== 'template') {
+    qualityRetried = true;
+    const retrySystem = `${systemPrompt}\n\nПРЕДЫДУЩИЙ ОТВЕТ ОТКЛОНЁН: ${quality.issues.join('; ')}. Перепиши полностью, исправь все замечания.`;
+    await runAi(true);
+    quality = validateDraftQuality(draft, qualityContext);
+  }
+
+  return { draft, source, provider, quality, qualityRetried };
 }
 
 function aiHint({ yandexConfigured, openaiConfigured }) {
@@ -170,7 +232,12 @@ export default async function handler(req, res) {
   const scenario = detectBuyerScenario(feedback);
   const candidates = listAlternativeCandidates(catalogRows, feedback, feedback.nmId, 6);
 
-  const systemPrompt = buildFeedbackSystemPrompt({ scenario, variationSeed, regenerate });
+  const systemPrompt = buildFeedbackSystemPrompt({
+    scenario,
+    variationSeed,
+    regenerate,
+    buyerName: feedback?.userName || null,
+  });
   const userPrompt = buildFeedbackUserMessage({
     feedback,
     product,
@@ -183,49 +250,50 @@ export default async function handler(req, res) {
   const yandexConfigured = Boolean(readYandexConfig());
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
 
+  const templateArgs = { feedback, product, alternative, premiumUpsell, variationSeed };
+  const reviewLength = reviewCharCount(feedback);
+  const allowChat = reviewAsksContact(feedback);
+  const qualityContext = {
+    scenario,
+    feedback,
+    alternative,
+    premiumUpsell,
+    reviewAsksContact: allowChat,
+  };
+
   let draft;
   let source = 'template';
   let provider = 'template';
+  let quality = null;
+  let qualityRetried = false;
 
-  const templateArgs = { feedback, product, alternative, premiumUpsell, variationSeed };
-
-  if (yandexConfigured) {
+  if (yandexConfigured || openaiKey) {
     try {
-      draft = await generateWithYandex(userPrompt, systemPrompt, { regenerate, variationSeed });
-      source = regenerate ? 'yandex-regen' : 'yandex';
-      provider = 'yandex';
+      const result = await generateDraftWithQuality({
+        userPrompt,
+        systemPrompt,
+        yandexConfigured,
+        openaiKey,
+        regenerate,
+        reviewLength,
+        templateArgs,
+        qualityContext,
+      });
+      draft = result.draft;
+      source = result.source;
+      provider = result.provider;
+      quality = result.quality;
+      qualityRetried = result.qualityRetried;
     } catch (error) {
-      console.error('[feedbacks/feedback-draft] YandexGPT', error);
-      if (openaiKey) {
-        try {
-          draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, { regenerate, variationSeed });
-          source = regenerate ? 'openai-regen' : 'openai';
-          provider = 'openai';
-        } catch (openaiError) {
-          console.error('[feedbacks/feedback-draft] OpenAI fallback', openaiError);
-          draft = buildTemplateFallback(templateArgs);
-          source = 'template-fallback';
-          provider = 'template';
-        }
-      } else {
-        draft = buildTemplateFallback(templateArgs);
-        source = 'template-fallback';
-        provider = 'template';
-      }
-    }
-  } else if (openaiKey) {
-    try {
-      draft = await generateWithOpenAI(userPrompt, systemPrompt, openaiKey, { regenerate, variationSeed });
-      source = regenerate ? 'openai-regen' : 'openai';
-      provider = 'openai';
-    } catch (error) {
-      console.error('[feedbacks/feedback-draft] OpenAI', error);
-      draft = buildTemplateFallback(templateArgs);
+      console.error('[feedbacks/feedback-draft] AI generation failed', error);
+      draft = buildTemplateDraft(templateArgs);
       source = 'template-fallback';
       provider = 'template';
+      quality = validateDraftQuality(draft, qualityContext);
     }
   } else {
-    draft = buildTemplateFallback(templateArgs);
+    draft = buildTemplateDraft(templateArgs);
+    quality = validateDraftQuality(draft, qualityContext);
   }
 
   const validation = validateFeedbackAnswer(draft);
@@ -256,6 +324,9 @@ export default async function handler(req, res) {
     premiumUpsell,
     candidates,
     validation,
+    quality: quality || validateDraftQuality(draft, qualityContext),
+    qualityRetried,
+    yandexModel: yandexConfigured ? pickYandexModel(reviewLength) : null,
     hint:
       provider === 'template'
         ? aiHint({ yandexConfigured, openaiConfigured: Boolean(openaiKey) })

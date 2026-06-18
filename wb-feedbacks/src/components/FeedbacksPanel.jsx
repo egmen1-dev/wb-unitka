@@ -41,6 +41,29 @@ function formatDate(iso) {
   }
 }
 
+function qualityBadgeClass(score, templateLike) {
+  if (templateLike || score < 50) return 'bg-rose-100 text-rose-800';
+  if (score < 75) return 'bg-amber-100 text-amber-800';
+  return 'bg-emerald-100 text-emerald-800';
+}
+
+function QualityBadge({ quality }) {
+  if (!quality || quality.score == null) return null;
+  const label = quality.templateLike
+    ? `Шаблонно · ${quality.score}%`
+    : quality.ok
+      ? `Качество ${quality.score}%`
+      : `Слабо · ${quality.score}%`;
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${qualityBadgeClass(quality.score, quality.templateLike)}`}
+      title={quality.issues?.length ? quality.issues.join('; ') : 'Ответ прошёл проверку качества'}
+    >
+      {label}
+    </span>
+  );
+}
+
 function scenarioBadgeClass(tone) {
   if (tone === 'positive') return 'bg-emerald-100 text-emerald-800';
   if (tone === 'negative') return 'bg-rose-100 text-rose-800';
@@ -573,6 +596,8 @@ export default function FeedbacksPanel({ token }) {
             alternative: payload.alternative,
             premiumUpsell: payload.premiumUpsell,
             validation: payload.validation,
+            quality: payload.quality || null,
+            qualityRetried: payload.qualityRetried || false,
             hint: payload.hint,
             scenario: payload.scenario || null,
           },
@@ -852,6 +877,7 @@ export default function FeedbacksPanel({ token }) {
                 <div className="mt-4 border-t border-slate-100 pt-4">
                   <div className="flex flex-wrap items-center gap-2">
                     {draft?.scenario ? <ScenarioBadge scenario={draft.scenario} /> : null}
+                    {draft?.quality ? <QualityBadge quality={draft.quality} /> : null}
                     <button
                       type="button"
                       className="btn-secondary text-sm"
@@ -900,6 +926,16 @@ export default function FeedbacksPanel({ token }) {
                   <p className="mt-1 text-xs text-slate-400">
                     {(draft?.text || '').length} / 1000
                     {draft?.source ? ` · ${draft.source}` : ''}
+                    {draft?.quality?.templateLike || (draft?.quality?.score != null && draft.quality.score < 60) ? (
+                      <span className="ml-1 text-amber-600">
+                        · перегенерируй, если звучит шаблонно
+                      </span>
+                    ) : null}
+                    {draft?.quality?.issues?.length ? (
+                      <span className="mt-0.5 block text-amber-600" title={draft.quality.issues.join('; ')}>
+                        {draft.quality.issues.slice(0, 2).join(' · ')}
+                      </span>
+                    ) : null}
                   </p>
                 </div>
               ) : null}
