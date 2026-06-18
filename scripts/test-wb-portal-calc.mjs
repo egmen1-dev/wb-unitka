@@ -58,7 +58,7 @@ function check(label, ok) {
 
 const row = calculateUnitEconomicsRow(ARTICLE, baseSettings);
 
-console.log('8030700646 @ 7000₽ — settings: 48ч доставки, налог с цены, без НДС\n');
+console.log('8030700646 @ 7000₽ — УСН 6% + НДС 5% с цены\n');
 
 check(
   'комиссия FBS 35.3% (48ч из настроек, не 29ч из кабинета)',
@@ -82,7 +82,8 @@ const expectedLog = calcWbLogisticsReportAligned({
 });
 check('логистика = формула отчёта (прямая+обратная)/выкуп', near(row.logisticsFbs, expectedLog, 5));
 
-check('налог 6% с цены без НДС', near(row.taxRub, 7000 * 0.06, 1));
+check('налог УСН 6% + НДС 5% с цены', near(row.taxRub, 7000 * 0.06 + (7000 * 0.05) / 1.05, 2));
+check('НДС 5/105', near(row.vatRub, (7000 * 0.05) / 1.05, 2));
 
 const withActual = calculateUnitEconomicsRow(ARTICLE, {
   ...baseSettings,

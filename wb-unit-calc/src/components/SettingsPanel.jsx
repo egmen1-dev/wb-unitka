@@ -11,7 +11,8 @@ const NUMBER_FIELDS = [
     key: 'vatRate',
     label: 'НДС, %',
     step: 0.1,
-    hint: '5% при УСН+НДС; из retail с НДС → ×5/105',
+    hint: 'Всегда 5% (×5/105 от retail с НДС)',
+    readOnly: true,
   },
   { key: 'extraCommissionRate', label: 'Доп. комиссия WB, %', step: 0.01 },
   { key: 'buyoutRate', label: '% выкупа (справочно)', step: 1, hint: 'По артикулам: факт из отчёта или 100%' },
@@ -62,7 +63,6 @@ const BOOL_FIELDS = [
   { key: 'includeAcceptance', label: 'Учитывать приёмку' },
   { key: 'includeProcessing', label: 'Учитывать обработку' },
   { key: 'includeAdvertising', label: 'Учитывать рекламу' },
-  { key: 'includeVat', label: 'Учитывать НДС в расчёте' },
   { key: 'vatIncludedInPrice', label: 'НДС уже в цене покупателя (retail)' },
 ];
 
@@ -146,11 +146,15 @@ export default function SettingsPanel({
                   ) : null}
                 </span>
                 <input
-                  className="input"
+                  className={`input${field.readOnly ? ' bg-slate-100 text-slate-500' : ''}`}
                   type="number"
                   step={field.step}
                   value={form[field.key]}
-                  onChange={(e) => updateField(field.key, e.target.value)}
+                  readOnly={Boolean(field.readOnly)}
+                  onChange={(e) => {
+                    if (field.readOnly) return;
+                    updateField(field.key, e.target.value);
+                  }}
                 />
               </label>
             ))}
