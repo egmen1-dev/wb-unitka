@@ -1,7 +1,5 @@
 import { fetchContentCardsByNmIds, withWbApiToken } from '../../lib/wb-official-api.js';
 import {
-  buildFeedbackSystemPrompt,
-  buildFeedbackUserMessage,
   buildTemplateDraft,
   catalogRowToProductContext,
   detectBuyerScenario,
@@ -12,6 +10,11 @@ import {
   validateDraftQuality,
   validateFeedbackAnswer,
 } from '../../lib/feedback-ai-prompt.js';
+import {
+  buildManagerSystemPrompt,
+  buildReviewUserMessage,
+  mapManagerScenarioLabel,
+} from '../../lib/feedback-manager-prompt.js';
 import { completeYandexGpt, pickYandexModel, readYandexConfig } from '../../lib/yandex-gpt.js';
 import { serializeFeedback } from '../../lib/wb-feedbacks.js';
 
@@ -76,7 +79,7 @@ async function enrichProductFromContent(token, row, feedback) {
 }
 
 async function generateWithOpenAI(userPrompt, systemPrompt, apiKey, { regenerate = false } = {}) {
-  const temperature = regenerate ? 0.95 : 0.88;
+  const temperature = regenerate ? 0.85 : 0.8;
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -116,7 +119,7 @@ async function generateWithOpenAI(userPrompt, systemPrompt, apiKey, { regenerate
 }
 
 async function generateWithYandex(userPrompt, systemPrompt, { regenerate = false, reviewLength = 0 } = {}) {
-  const temperature = regenerate ? 0.95 : 0.88;
+  const temperature = regenerate ? 0.85 : 0.8;
   const model = pickYandexModel(reviewLength);
   const { text } = await completeYandexGpt({
     system: systemPrompt,
@@ -253,20 +256,17 @@ export default async function handler(req, res) {
   const scenario = detectBuyerScenario(feedback);
   const candidates = listAlternativeCandidates(catalogRows, feedback, feedback.nmId, 6);
 
-  const systemPrompt = buildFeedbackSystemPrompt({
+  const systemPrompt = buildManagerSystemPrompt({
+    product,
+    alternative,
+    premiumUpsell,
     scenario,
+    feedback,
     variationSeed,
     regenerate,
     buyerName: feedback?.userName || null,
   });
-  const userPrompt = buildFeedbackUserMessage({
-    feedback,
-    product,
-    alternative,
-    premiumUpsell,
-    candidates,
-    scenario,
-  });
+  const userPrompt = buildReviewUserMessage({ feedback });
 
   const yandexConfigured = Boolean(readYandexConfig());
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
@@ -280,6 +280,7 @@ export default async function handler(req, res) {
     alternative,
     premiumUpsell,
     reviewAsksContact: allowChat,
+    managerStyle: true,
   };
 
   let draft;
@@ -363,6 +364,7 @@ export default async function handler(req, res) {
     scenario: {
       type: scenario.type,
       label: scenario.label,
+      managerLabel: mapManagerScenarioLabel(scenario, feedback),
       tone: scenario.tone,
       keywords: scenario.keywords,
       mirrorPhrases: scenario.mirrorPhrases,
