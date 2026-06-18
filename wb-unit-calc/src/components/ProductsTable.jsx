@@ -76,7 +76,7 @@ const COLUMNS = [
   { key: 'stockFbs', label: 'FBS', hint: 'Остаток на складе продавца' },
   { key: 'stockFbo', label: 'FBO' },
   { key: 'orders7d', label: 'Заказы 7д', sortable: true, hint: 'Заказы за 7 дней из WB' },
-  { key: 'fbsAvgDeliveryHours', label: 'Дост., ч', sortable: true, hint: 'Ср. время доставки из WB (timeToReady)' },
+  { key: 'fbsAvgDeliveryHours', label: 'Дост., ч', sortable: true, hint: 'Факт из WB (timeToReady); комиссия — из настроек, если задано' },
   { key: 'buyoutRate', label: 'Выкуп', hint: 'Факт из отчёта · без аналитики 100%' },
   { key: 'purchasePrice', label: 'Закупка', overrideField: 'purchase', purchase: true },
   { key: 'basePrice', label: 'Базовая' },
@@ -200,6 +200,12 @@ function fbsCommissionTitle(row) {
   if (row.fbsDeliverySurcharge > 0) {
     parts.push(`+${fmtPct(row.fbsDeliverySurcharge)} за ${row.fbsAvgDeliveryHours}ч`);
   }
+  if (
+    row.fbsAvgDeliveryHoursReport != null &&
+    row.fbsAvgDeliveryHoursReport !== row.fbsAvgDeliveryHours
+  ) {
+    parts.push(`факт WB ${fmtNum(row.fbsAvgDeliveryHoursReport, 1)}ч`);
+  }
   parts.push(`+ ${fmtPct(row.fboTotalRate - row.fboCategoryRate)} доп.`);
   parts.push(`= ${fmtPct(row.fbsTotalRate)} итог`);
   return parts.join(' · ');
@@ -222,7 +228,10 @@ function cellValue(row, key) {
   }
   if (key === 'fbsCoeff') return value != null ? fmtNum(value, 2) : '—';
   if (PCT_KEYS.has(key)) return fmtPct(value);
-  if (key === 'fbsAvgDeliveryHours') return value != null ? fmtNum(value, 1) : '—';
+  if (key === 'fbsAvgDeliveryHours') {
+    if (row.fbsAvgDeliveryHoursReport != null) return fmtNum(row.fbsAvgDeliveryHoursReport, 1);
+    return value != null ? fmtNum(value, 1) : '—';
+  }
   if (value == null || value === '') return '—';
   return value;
 }
