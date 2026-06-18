@@ -80,6 +80,18 @@ export default function TokenPanel({ token, onTokenChange }) {
 
       {shareStatus ? <p className="mt-2 text-xs text-emerald-700">{shareStatus}</p> : null}
 
+      {token && !editing ? (
+        <div className="mt-2 space-y-1">
+          <p className="text-xs text-slate-500">
+            Коллега откроет ссылку — токен подставится автоматически.
+          </p>
+          <p className="text-xs text-amber-700">
+            Ссылка содержит секретный токен — отправляйте только в доверенный канал (личка, корпоративный
+            мессенджер).
+          </p>
+        </div>
+      ) : null}
+
       {token ? (
         <WbTokenScopesHint
           token={token}
