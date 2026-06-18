@@ -29,12 +29,7 @@ function readStorageEntry() {
 
 /** Drop expired or corrupt rate-limit locks and stale localStorage on boot / refresh. */
 export function clearStaleFeedbacksCacheOnBoot() {
-  if (rateLimitUntil > 0 && Date.now() >= rateLimitUntil) {
-    rateLimitUntil = 0;
-  }
-  if (rateLimitUntil > Date.now() + 120_000) {
-    rateLimitUntil = 0;
-  }
+  clearFeedbacksRateLimit();
 
   const entry = readStorageEntry();
   if (!entry) return;
