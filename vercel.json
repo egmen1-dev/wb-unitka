@@ -12,6 +12,9 @@
     },
     "api/unit-calc/supplier-price.js": {
       "maxDuration": 60
+    },
+    "api/unit-calc/validate-token.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

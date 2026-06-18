@@ -7,13 +7,10 @@ import {
   summarizeFbsAssembly,
 } from '../../lib/wb-fbs-assembly.js';
 import { parseWbAuthErrorFromMessage } from '../../lib/wb-auth-error.js';
+import { readWbRequestToken } from '../../lib/wb-request-token.js';
 
 function readToken(req) {
-  const header = req.headers?.authorization || req.headers?.Authorization || '';
-  const fromHeader = String(header).replace(/^Bearer\s+/i, '').trim();
-  if (fromHeader) return fromHeader;
-  if (req.body?.token) return String(req.body.token).trim();
-  return process.env.WB_API_TOKEN?.trim() || null;
+  return readWbRequestToken(req);
 }
 
 function serializeOrder(order) {

@@ -71,6 +71,7 @@ import {
   saveSettings,
   saveSupplierCatalogs,
   saveWbProductCache,
+  purgeLegacyStorageKeys,
 } from './lib/storage';
 import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';
 import { buildEffectiveWbCache } from '@lib/wb-sync-cache.js';
@@ -113,6 +114,13 @@ async function syncFromWb({
   catalogCursor = null,
   skipRealization = false,
 }) {
+  const authToken = String(token || '')
+    .trim()
+    .replace(/^Bearer\s+/i, '');
+  if (!authToken) {
+    throw new Error('Сначала добавьте WB API токен');
+  }
+
   const controller = new AbortController();
   const timeoutMs = phase === 'catalog' ? 90_000 : 150_000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -122,7 +130,7 @@ async function syncFromWb({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify({
         purchaseOverrides: purchases,
@@ -577,7 +585,6 @@ export default function App() {
             setTeamAccess,
             setProfiles,
             setActiveProfileId,
-            setWbFeedbacksToken,
             setPurchases,
             setSettings,
             setSettingsUpdatedAt,
@@ -610,6 +617,7 @@ export default function App() {
   }, [team, cloudSyncing, loading, enriching, workspaceUpdatedAt]);
 
   useEffect(() => {
+    purgeLegacyStorageKeys();
     if (profiles.length) return;
     const localProfiles = loadProfiles();
     if (!localProfiles.length) return;

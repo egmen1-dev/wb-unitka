@@ -1,9 +1,28 @@
 import { useState } from 'react';
 import { createProfileId } from '../lib/storage';
+import { readJsonResponse } from '../lib/http';
 
 function maskToken(token) {
   if (!token || token.length < 12) return '••••';
   return `${token.slice(0, 6)}…${token.slice(-4)}`;
+}
+
+function normalizeInputToken(token) {
+  return String(token || '')
+    .trim()
+    .replace(/^Bearer\s+/i, '');
+}
+
+async function validateWbToken(token) {
+  const response = await fetch('/api/unit-calc/validate-token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const { data } = await readJsonResponse(response);
+  return { ok: response.ok, status: response.status, data };
 }
 
 export default function ApiKeyPanel({
@@ -19,28 +38,47 @@ export default function ApiKeyPanel({
   const [name, setName] = useState('');
   const [token, setToken] = useState('');
   const [showForm, setShowForm] = useState(profiles.length === 0);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const active = profiles.find((p) => p.id === activeProfileId) || profiles[0];
 
-  function addProfile(event) {
+  async function addProfile(event) {
     event.preventDefault();
-    const trimmedToken = token.trim();
+    const trimmedToken = normalizeInputToken(token);
     if (!trimmedToken) return;
 
-    const profile = {
-      id: createProfileId(),
-      name: name.trim() || `Кабинет ${profiles.length + 1}`,
-      token: trimmedToken,
-      createdAt: new Date().toISOString(),
-    };
+    setSaving(true);
+    setFormError('');
 
-    const next = [...profiles, profile];
-    onProfilesChange(next);
-    onActiveChange(profile.id);
-    onProfileAdded?.(profile);
-    setName('');
-    setToken('');
-    setShowForm(false);
+    try {
+      const check = await validateWbToken(trimmedToken);
+      if (!check.ok) {
+        setFormError(check.data?.error || 'Токен не прошёл проверку WB');
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const profile = {
+        id: createProfileId(),
+        name: name.trim() || `Кабинет ${profiles.length + 1}`,
+        token: trimmedToken,
+        createdAt: now,
+        tokenUpdatedAt: now,
+      };
+
+      const next = [...profiles, profile];
+      onProfilesChange(next);
+      onActiveChange(profile.id);
+      onProfileAdded?.(profile);
+      setName('');
+      setToken('');
+      setShowForm(false);
+    } catch (err) {
+      setFormError(err.message || 'Не удалось проверить токен');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function removeProfile(id) {
@@ -67,7 +105,7 @@ export default function ApiKeyPanel({
               : 'Создайте команду выше, чтобы коллеги видели те же ключи.'}
           </p>
           <p className="mt-1 text-xs text-slate-400">
-            Для ответов на отзывы —{' '}
+            Нужны категории: Контент, Цены и скидки, Маркетплейс, Тарифы. Для ответов на отзывы —{' '}
             <a
               href="https://wb-feedbacks.vercel.app"
               target="_blank"
@@ -134,9 +172,12 @@ export default function ApiKeyPanel({
             onChange={(e) => setToken(e.target.value)}
             required
           />
-          <button type="submit" className="btn-primary">
-            Сохранить
+          <button type="submit" className="btn-primary" disabled={saving}>
+            {saving ? 'Проверка…' : 'Сохранить'}
           </button>
+          {formError ? (
+            <p className="md:col-span-3 text-xs font-medium text-rose-700">{formError}</p>
+          ) : null}
         </form>
       ) : null}
     </section>

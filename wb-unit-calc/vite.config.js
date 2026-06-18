@@ -14,6 +14,7 @@ const API_ROUTES = {
   '/api/unit-calc/workspace': () => import('../api/unit-calc/workspace.js'),
   '/api/unit-calc/supplier-price': () => import('../api/unit-calc/supplier-price.js'),
   '/api/unit-calc/fbs-assembly': () => import('../api/unit-calc/fbs-assembly.js'),
+  '/api/unit-calc/validate-token': () => import('../api/unit-calc/validate-token.js'),
 };
 
 function unitCalcApiPlugin() {

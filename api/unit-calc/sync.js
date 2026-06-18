@@ -6,13 +6,10 @@ import {
   fetchSupplierPriceIndex,
 } from '../../lib/supplier-price-list.js';
 import { parseWbAuthErrorFromMessage } from '../../lib/wb-auth-error.js';
+import { readWbRequestToken } from '../../lib/wb-request-token.js';
 
 function readToken(req) {
-  const header = req.headers?.authorization || req.headers?.Authorization || '';
-  const fromHeader = String(header).replace(/^Bearer\s+/i, '').trim();
-  if (fromHeader) return fromHeader;
-  if (req.body?.token) return String(req.body.token).trim();
-  return process.env.WB_API_TOKEN?.trim() || null;
+  return readWbRequestToken(req);
 }
 
 export default async function handler(req, res) {
@@ -137,9 +134,10 @@ export default async function handler(req, res) {
       }) ||
       parseWbAuthErrorFromMessage(error.message);
     if (authError) {
-      return res.status(401).json({
+      return res.status(authError.kind === 'scope' ? 403 : 401).json({
         error: authError.message,
         code: authError.code || (authError.kind === 'withdrawn' ? 'WB_TOKEN_WITHDRAWN' : 'WB_TOKEN_UNAUTHORIZED'),
+        kind: authError.kind,
       });
     }
     return res.status(500).json({ error: error.message || 'Ошибка загрузки WB API' });

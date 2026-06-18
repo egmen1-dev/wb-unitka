@@ -8,6 +8,9 @@ const KEYS = {
   wbProductCache: 'wb-unit-calc:wb-product-cache',
 };
 
+/** Устаревшие ключи (отзывы вынесены в wb-feedbacks). */
+const LEGACY_KEYS = ['wbFeedbacksToken', 'wb-unit-calc:wb-feedbacks-token', 'wb-unit-calc:feedbacks-token'];
+
 function workspaceCacheKey(teamCode) {
   return `wb-unit-calc:workspace:${String(teamCode || '').trim().toUpperCase()}`;
 }
@@ -98,6 +101,18 @@ export function saveWbProductCache(cache) {
 }
 export function createProfileId() {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/** Удалить устаревшие ключи отзывов — Юнитка использует только wb-unit-calc:profiles. */
+export function purgeLegacyStorageKeys() {
+  if (typeof localStorage === 'undefined') return;
+  for (const key of LEGACY_KEYS) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /** Локальный boot-кэш без тяжёлого productCache (карточки восстанавливаются из rows). */
