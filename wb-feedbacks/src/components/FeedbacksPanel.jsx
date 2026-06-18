@@ -474,7 +474,13 @@ export default function FeedbacksPanel({ token }) {
       setStatus(badge ? `Без ответа: ${count} · ${badge}` : `Без ответа: ${count}`);
       setError('');
       setLoading(false);
-      return undefined;
+      loadAttemptRef.current = 0;
+      loadFeedbacks({ force: true });
+      return () => {
+        abortRef.current?.abort();
+        clearLoadingWatchdog();
+        if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
+      };
     }
 
     const cachedCount = getCachedUnansweredCount();
