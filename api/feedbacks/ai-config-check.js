@@ -1,3 +1,4 @@
+import { getDeployMeta } from '../../lib/deploy-meta.js';
 import { readYandexConfig } from '../../lib/yandex-gpt.js';
 
 function envPresent(name) {
@@ -15,6 +16,7 @@ export function getAiConfigStatus() {
       YANDEX_GPT_MODEL: envPresent('YANDEX_GPT_MODEL'),
       OPENAI_API_KEY: envPresent('OPENAI_API_KEY'),
     },
+    ...getDeployMeta(),
   };
 }
 

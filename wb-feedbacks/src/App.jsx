@@ -75,7 +75,7 @@ export default function App() {
               Юнитки WB
             </a>
           </p>
-          <p className="font-mono text-[10px] text-slate-300">build {APP_BUILD}</p>
+          <p className="font-mono text-[10px] text-slate-300">commit {APP_BUILD}</p>
         </footer>
       </main>
     </div>

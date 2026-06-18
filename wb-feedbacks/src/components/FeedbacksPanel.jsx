@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { APP_BUILD } from '../lib/app-build';
 import { fmtMoney } from '../lib/format';
 import { DEFAULT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from '../lib/http';
+import { EXPECTED_PROMPT_VERSION, PROMPT_BADGE_LABEL } from '../lib/prompt-meta';
 import {
   clearFeedbacksRateLimit,
   formatCacheBadge,
@@ -241,6 +242,9 @@ async function fetchAiConfigStatus() {
           yandexConfigured: Boolean(payload?.yandexConfigured),
           openaiConfigured: Boolean(payload?.openaiConfigured),
           envPresent: payload?.envPresent || null,
+          promptVersion: payload?.promptVersion || null,
+          commitSha: payload?.commitSha || null,
+          managerPromptOnly: payload?.managerPromptOnly ?? null,
           loading: false,
           error: '',
           apiCheckStatus: 'ok',
@@ -276,14 +280,36 @@ async function fetchAiConfigStatus() {
   };
 }
 
-function formatPromptLabel(promptVersion, commitSha) {
-  if (promptVersion === 'manager-v2') {
-    const sha = commitSha || APP_BUILD;
-    return `Промпт: менеджер v2 · ${sha}`;
-  }
-  if (promptVersion) return `Промпт: ${promptVersion}`;
-  return null;
+function PromptBadge({ promptVersion, commitSha, stale = false }) {
+  if (!promptVersion && !stale) return null;
+  const version = promptVersion || EXPECTED_PROMPT_VERSION;
+  const sha = commitSha || APP_BUILD;
+  const mismatch = version !== EXPECTED_PROMPT_VERSION;
+  const title = [
+    PROMPT_BADGE_LABEL,
+    `версия API: ${version}`,
+    sha ? `commit ${sha}` : null,
+    stale ? 'ожидается ответ API' : null,
+    mismatch ? 'устаревшая версия промпта на сервере' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+        mismatch || stale
+          ? 'bg-amber-100 text-amber-900'
+          : 'bg-indigo-100 text-indigo-800'
+      }`}
+      title={title}
+    >
+      {PROMPT_BADGE_LABEL} · {version}
+      {sha ? ` · ${sha}` : ''}
+    </span>
+  );
 }
+
 
 function isTemplateDraft(draft) {
   return draft?.provider === 'template' || draft?.source?.startsWith?.('template');
@@ -345,6 +371,9 @@ export default function FeedbacksPanel({ token }) {
     yandexConfigured: false,
     openaiConfigured: false,
     envPresent: null,
+    promptVersion: null,
+    commitSha: null,
+    managerPromptOnly: null,
     loading: false,
     error: '',
     apiCheckStatus: 'pending',
@@ -648,9 +677,19 @@ export default function FeedbacksPanel({ token }) {
             ...prev,
             yandexConfigured: prev.yandexConfigured || payload.provider === 'yandex' || payload.yandexConfigured,
             openaiConfigured: prev.openaiConfigured || payload.provider === 'openai' || payload.openaiConfigured,
+            promptVersion: payload.promptVersion || prev.promptVersion,
+            commitSha: payload.commitSha || prev.commitSha,
+            managerPromptOnly: payload.managerPromptOnly ?? prev.managerPromptOnly,
             loading: false,
             error: '',
             apiCheckStatus: prev.apiCheckStatus === 'ok' ? 'ok' : 'inferred',
+          }));
+        } else if (payload.promptVersion) {
+          setAiConfig((prev) => ({
+            ...prev,
+            promptVersion: payload.promptVersion,
+            commitSha: payload.commitSha || prev.commitSha,
+            managerPromptOnly: payload.managerPromptOnly ?? prev.managerPromptOnly,
           }));
         }
         setExpandedId(feedback.id);
@@ -751,6 +790,11 @@ export default function FeedbacksPanel({ token }) {
                   {countUnanswered}
                 </span>
               ) : null}
+              <PromptBadge
+                promptVersion={aiConfig.promptVersion}
+                commitSha={aiConfig.commitSha || APP_BUILD}
+                stale={!aiConfig.promptVersion && aiConfig.apiCheckStatus !== 'ok'}
+              />
               {cacheBadge ? (
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
                   {cacheBadge}
@@ -920,6 +964,9 @@ export default function FeedbacksPanel({ token }) {
                   <div className="flex flex-wrap items-center gap-2">
                     {draft?.scenario ? <ScenarioBadge scenario={draft.scenario} /> : null}
                     {draft?.quality ? <QualityBadge quality={draft.quality} /> : null}
+                    {draft?.promptVersion ? (
+                      <PromptBadge promptVersion={draft.promptVersion} commitSha={draft.commitSha} />
+                    ) : null}
                     <button
                       type="button"
                       className="btn-secondary text-sm"
@@ -961,12 +1008,6 @@ export default function FeedbacksPanel({ token }) {
                       ⚠️ НЕ МЕНЕДЖЕР — ОШИБКА AI. Ответ сгенерирован по старому шаблону, не отправляйте его.
                       Проверьте ключи YandexGPT в Vercel и перегенерируйте.
                     </div>
-                  ) : null}
-
-                  {formatPromptLabel(draft?.promptVersion, draft?.commitSha) ? (
-                    <p className="mt-2 font-mono text-[11px] text-slate-500">
-                      {formatPromptLabel(draft?.promptVersion, draft?.commitSha)}
-                    </p>
                   ) : null}
 
                   <textarea

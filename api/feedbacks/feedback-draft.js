@@ -15,17 +15,12 @@ import {
   buildReviewUserMessage,
   mapManagerScenarioLabel,
 } from '../../lib/feedback-manager-prompt.js';
+import { getDeployMeta } from '../../lib/deploy-meta.js';
 import { completeYandexGpt, pickYandexModel, readYandexConfig } from '../../lib/yandex-gpt.js';
 import { serializeFeedback } from '../../lib/wb-feedbacks.js';
 
 const MAX_QUALITY_RETRIES = 3;
 const QUALITY_ERROR = 'Не удалось сгенерировать качественный ответ. Попробуйте перегенерировать.';
-const PROMPT_VERSION = 'manager-v2';
-
-function readCommitSha() {
-  const sha = process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || '';
-  return sha ? sha.slice(0, 7) : 'local';
-}
 
 function readToken(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
@@ -285,6 +280,8 @@ export default async function handler(req, res) {
 
   const yandexConfigured = Boolean(readYandexConfig());
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
+  const aiAvailable = yandexConfigured || Boolean(openaiKey);
+  const deployMeta = getDeployMeta();
 
   const templateArgs = { feedback, product, alternative, premiumUpsell, variationSeed, scenario };
   const reviewLength = reviewCharCount(feedback);
@@ -303,9 +300,30 @@ export default async function handler(req, res) {
   let provider = 'template';
   let quality = null;
   let qualityRetried = false;
-  let generationError = null;
 
-  if (yandexConfigured || openaiKey) {
+  if (!aiAvailable) {
+    draft = buildTemplateDraft(templateArgs);
+    source = 'template';
+    provider = 'template';
+    quality = validateDraftQuality(draft, qualityContext);
+    if (!quality.ok) {
+      return res.status(503).json({
+        error: QUALITY_ERROR,
+        ...deployMeta,
+        hint: quality.issues.join('; '),
+        provider: 'template',
+        source: 'template-error',
+        quality,
+        yandexConfigured: false,
+        openaiConfigured: false,
+        scenario: {
+          type: scenario.type,
+          label: scenario.label,
+          tone: scenario.tone,
+        },
+      });
+    }
+  } else {
     try {
       const result = await generateDraftWithQuality({
         userPrompt,
@@ -323,11 +341,10 @@ export default async function handler(req, res) {
       qualityRetried = result.qualityRetried;
     } catch (error) {
       console.error('[feedbacks/feedback-draft] AI generation failed', error);
-      generationError = error.message || QUALITY_ERROR;
+      const generationError = error.message || QUALITY_ERROR;
       return res.status(503).json({
         error: generationError,
-        promptVersion: PROMPT_VERSION,
-        commitSha: readCommitSha(),
+        ...deployMeta,
         hint:
           error.quality?.issues?.length > 0
             ? `Проблемы: ${error.quality.issues.slice(0, 3).join('; ')}`
@@ -345,29 +362,6 @@ export default async function handler(req, res) {
         },
       });
     }
-  } else {
-    draft = buildTemplateDraft(templateArgs);
-    source = 'template';
-    provider = 'template';
-    quality = validateDraftQuality(draft, qualityContext);
-    if (!quality.ok) {
-      return res.status(503).json({
-        error: QUALITY_ERROR,
-        promptVersion: PROMPT_VERSION,
-        commitSha: readCommitSha(),
-        hint: quality.issues.join('; '),
-        provider: 'template',
-        source: 'template-error',
-        quality,
-        yandexConfigured: false,
-        openaiConfigured: false,
-        scenario: {
-          type: scenario.type,
-          label: scenario.label,
-          tone: scenario.tone,
-        },
-      });
-    }
   }
 
   const validation = validateFeedbackAnswer(draft);
@@ -376,8 +370,7 @@ export default async function handler(req, res) {
     draft: validation.text,
     source,
     provider,
-    promptVersion: PROMPT_VERSION,
-    commitSha: readCommitSha(),
+    ...deployMeta,
     regenerate,
     variationSeed,
     yandexConfigured,
