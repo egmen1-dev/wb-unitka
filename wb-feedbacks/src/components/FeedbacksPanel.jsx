@@ -70,14 +70,28 @@ function scenarioBadgeClass(tone) {
   return 'bg-amber-100 text-amber-800';
 }
 
+function managerLabelTone(label) {
+  if (label === 'похвала') return 'positive';
+  if (label === 'жалоба' || label === 'брак') return 'negative';
+  return 'neutral';
+}
+
 function ScenarioBadge({ scenario }) {
-  if (!scenario?.label) return null;
+  const displayLabel = scenario?.managerLabel || scenario?.label;
+  if (!displayLabel) return null;
+  const tone = scenario?.tone || managerLabelTone(scenario?.managerLabel);
   return (
     <span
-      className={`rounded-full px-2 py-0.5 text-xs font-medium ${scenarioBadgeClass(scenario.tone)}`}
-      title={scenario.keywords?.length ? `Ключевые слова: ${scenario.keywords.join(', ')}` : scenario.label}
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${scenarioBadgeClass(tone)}`}
+      title={
+        scenario?.label && scenario?.managerLabel && scenario.label !== scenario.managerLabel
+          ? `${displayLabel} · ${scenario.label}`
+          : scenario.keywords?.length
+            ? `Ключевые слова: ${scenario.keywords.join(', ')}`
+            : displayLabel
+      }
     >
-      {scenario.label}
+      {displayLabel}
     </span>
   );
 }

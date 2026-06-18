@@ -121,14 +121,23 @@ async function generateWithOpenAI(userPrompt, systemPrompt, apiKey, { regenerate
 async function generateWithYandex(userPrompt, systemPrompt, { regenerate = false, reviewLength = 0 } = {}) {
   const temperature = regenerate ? 0.85 : 0.8;
   const model = pickYandexModel(reviewLength);
-  const { text } = await completeYandexGpt({
+  const opts = {
     system: systemPrompt,
     user: userPrompt,
     temperature,
     maxTokens: 550,
-    model,
-  });
-  return text;
+  };
+  try {
+    const { text } = await completeYandexGpt({ ...opts, model });
+    return text;
+  } catch (error) {
+    const envModel = process.env.YANDEX_GPT_MODEL?.trim();
+    if (!envModel && model !== 'yandexgpt-lite') {
+      const { text } = await completeYandexGpt({ ...opts, model: 'yandexgpt-lite' });
+      return text;
+    }
+    throw error;
+  }
 }
 
 function reviewCharCount(feedback) {
