@@ -11,11 +11,21 @@ import {
 /** Minimum gap between WB feedbacks API calls of the same kind. */
 const MIN_GAP_MS = 1800;
 const MAX_AUTO_RETRIES = 5;
+/** Reject queued tasks that wait too long — prevents a stuck chain from freezing the panel. */
+const QUEUE_WAIT_TIMEOUT_MS = 45_000;
 
 let readChain = Promise.resolve();
 let writeChain = Promise.resolve();
 let lastReadAt = 0;
 let lastWriteAt = 0;
+
+/** Clear in-memory queue state on page load (rate limits cleared separately in feedbacks-cache). */
+export function resetWbApiQueue() {
+  readChain = Promise.resolve();
+  writeChain = Promise.resolve();
+  lastReadAt = 0;
+  lastWriteAt = 0;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,9 +64,23 @@ async function waitForCooldownAndGap(kind) {
   else lastReadAt = Date.now();
 }
 
+function withQueueTimeout(task, label) {
+  return Promise.race([
+    task(),
+    sleep(QUEUE_WAIT_TIMEOUT_MS).then(() => {
+      throw new Error(
+        `${label} не начался за ${Math.round(QUEUE_WAIT_TIMEOUT_MS / 1000)} сек — обновите страницу`
+      );
+    }),
+  ]);
+}
+
 /** Serialize WB feedbacks API calls per kind (read vs write). */
 export function enqueueWbApi(task, { kind = 'read' } = {}) {
-  const run = (kind === 'write' ? writeChain : readChain).then(() => task());
+  const label = kind === 'write' ? 'Запрос записи WB' : 'Запрос чтения WB';
+  const run = (kind === 'write' ? writeChain : readChain).then(() =>
+    withQueueTimeout(task, label)
+  );
   if (kind === 'write') writeChain = run.catch(() => {});
   else readChain = run.catch(() => {});
   return run;

@@ -19,9 +19,8 @@ import {
   formatCacheBadge,
   getCachedFeedbacksList,
   getCachedUnansweredCount,
-  getFeedbacksRateLimitSecondsLeft,
+  getFeedbacksReadRateLimitSecondsLeft,
   getStaleCachedFeedbacksList,
-  isFeedbacksRateLimited,
   isFeedbacksReadRateLimited,
   setCachedFeedbacksList,
   setCachedUnansweredCount,
@@ -597,8 +596,8 @@ export default function FeedbacksPanel({ token }) {
 
       if (force && !append) {
         loadAttemptRef.current = 0;
-        if (isFeedbacksRateLimited() && !isRetry) {
-          const sec = getFeedbacksRateLimitSecondsLeft();
+        if (isFeedbacksReadRateLimited() && !isRetry) {
+          const sec = getFeedbacksReadRateLimitSecondsLeft();
           if (sec > 0) {
             pendingRefreshRef.current = true;
             showRateLimit(sec, { queued: true });
@@ -613,8 +612,8 @@ export default function FeedbacksPanel({ token }) {
         return;
       }
 
-      if (!force && !isRetry && !append && isFeedbacksRateLimited()) {
-        const sec = getFeedbacksRateLimitSecondsLeft();
+      if (!force && !isRetry && !append && isFeedbacksReadRateLimited()) {
+        const sec = getFeedbacksReadRateLimitSecondsLeft();
         pendingRefreshRef.current = true;
         showRateLimit(sec, { queued: true });
         return;
@@ -681,7 +680,7 @@ export default function FeedbacksPanel({ token }) {
         if (err?.message === 'Запрос отменён') return;
         restoreCachedList({ stale: true });
         if (isRateLimitError(err)) {
-          const sec = Number(err.retryAfterSec) || getFeedbacksRateLimitSecondsLeft() || 5;
+          const sec = Number(err.retryAfterSec) || getFeedbacksReadRateLimitSecondsLeft() || 5;
           pendingRefreshRef.current = true;
           showRateLimit(sec, { queued: true });
           return;
@@ -729,17 +728,28 @@ export default function FeedbacksPanel({ token }) {
     loadFeedbacks({ force: true, append: true, skip: current });
   }, [data?.feedbacks?.length, loadFeedbacks, loading, loadingMore]);
 
-  const requestAiConfigCheck = useCallback(() => {
-    if (aiCheckStartedRef.current) return;
+  const requestAiConfigCheck = useCallback(({ force = false } = {}) => {
+    if (!force && aiCheckStartedRef.current) return;
     aiCheckStartedRef.current = true;
-    setAiConfig((prev) => ({ ...prev, loading: true, apiCheckStatus: 'loading' }));
-    fetchAiConfigStatus().then((result) => setAiConfig(result));
+    setAiConfig((prev) => ({ ...prev, loading: true, apiCheckStatus: 'loading', error: '' }));
+    fetchAiConfigStatus()
+      .then((result) => setAiConfig(result))
+      .catch((err) =>
+        setAiConfig((prev) => ({
+          ...prev,
+          loading: false,
+          error: err?.message || 'Ошибка проверки AI',
+          apiCheckStatus: 'error',
+        }))
+      );
   }, []);
 
   const handleRefresh = useCallback(() => {
-    if (loadInFlightRef.current) return;
-    if (isFeedbacksRateLimited()) {
-      const sec = getFeedbacksRateLimitSecondsLeft();
+    if (loadInFlightRef.current) {
+      cancelForegroundLoad();
+    }
+    if (isFeedbacksReadRateLimited()) {
+      const sec = getFeedbacksReadRateLimitSecondsLeft();
       if (sec > 0) {
         pendingRefreshRef.current = true;
         setRateLimitCountdown(sec);
@@ -750,8 +760,9 @@ export default function FeedbacksPanel({ token }) {
       }
     }
     pendingRefreshRef.current = false;
+    clearFeedbacksRateLimit('read');
     loadFeedbacks({ force: true });
-  }, [loadFeedbacks, restoreCachedList]);
+  }, [loadFeedbacks, restoreCachedList, cancelForegroundLoad]);
 
   useEffect(() => {
     if (!token) {
@@ -797,6 +808,19 @@ export default function FeedbacksPanel({ token }) {
   }, [token]);
 
   useEffect(() => {
+    if (!token) {
+      aiCheckStartedRef.current = false;
+      return undefined;
+    }
+    aiCheckStartedRef.current = false;
+    requestAiConfigCheck({ force: true });
+    const refreshTimer = window.setTimeout(() => {
+      loadFeedbacksRef.current?.({ force: true });
+    }, 800);
+    return () => window.clearTimeout(refreshTimer);
+  }, [token, requestAiConfigCheck]);
+
+  useEffect(() => {
     if (rateLimitCountdown <= 0) {
       if (pendingRefreshRef.current) {
         pendingRefreshRef.current = false;
@@ -805,7 +829,7 @@ export default function FeedbacksPanel({ token }) {
       return undefined;
     }
     const timer = setInterval(() => {
-      const left = getFeedbacksRateLimitSecondsLeft();
+      const left = getFeedbacksReadRateLimitSecondsLeft();
       setRateLimitCountdown(left);
       if (left <= 0) {
         clearFeedbacksRateLimit('read');
@@ -955,7 +979,7 @@ export default function FeedbacksPanel({ token }) {
         await loadFeedbacks({ force: true });
       } catch (err) {
         if (isRateLimitError(err)) {
-          const sec = Number(err.retryAfterSec) || getFeedbacksRateLimitSecondsLeft() || 5;
+          const sec = Number(err.retryAfterSec) || 5;
           setFeedbacksRateLimited(sec, { kind: err.kind === 'write' ? 'write' : 'read' });
           setRateLimitCountdown(sec);
           restoreCachedList({ stale: true });

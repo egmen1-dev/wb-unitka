@@ -98,6 +98,7 @@ export default function TokenPanel({ token, onTokenChange }) {
           collapsible
           defaultOpen={false}
           showCheckButton
+          autoCheckOnLoad
           className="mt-3"
         />
       ) : null}

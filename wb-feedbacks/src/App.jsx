@@ -4,6 +4,7 @@ import TokenPanel from './components/TokenPanel';
 import VersionBanner from './components/VersionBanner';
 import { APP_BUILD } from './lib/app-build';
 import { clearStaleFeedbacksCacheOnBoot } from './lib/feedbacks-cache';
+import { resetWbApiQueue } from './lib/wb-api-queue';
 import { loadToken, saveToken } from './lib/storage';
 import { clearTokenFromHash, readTokenFromHash } from './lib/token-share';
 import { fetchServerVersion } from './lib/version-check';
@@ -43,7 +44,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => clearStaleFeedbacksCacheOnBoot(), 0);
+    const timer = window.setTimeout(() => {
+      resetWbApiQueue();
+      clearStaleFeedbacksCacheOnBoot();
+    }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
