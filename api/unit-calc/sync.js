@@ -42,7 +42,9 @@ export default async function handler(req, res) {
         ? 'catalog'
         : req.body?.phase === 'realization'
           ? 'realization'
-          : 'data';
+          : req.body?.phase === 'prices'
+            ? 'prices'
+            : 'data';
     const wbCache = req.body?.wbCache || null;
     const settings = req.body?.settings || {};
     const snapshot = await fetchWbCatalogSnapshot(token, {
@@ -66,6 +68,17 @@ export default async function handler(req, res) {
         fullCatalogAt: snapshot.fullCatalogAt,
         cardsSyncedAt: snapshot.cardsSyncedAt,
         productCache: snapshot.productCache,
+      });
+    }
+
+    if (snapshot.phase === 'prices') {
+      return res.status(200).json({
+        phase: 'prices',
+        syncedAt: snapshot.syncedAt,
+        pricesSyncedAt: snapshot.pricesSyncedAt,
+        priceUpdates: snapshot.priceUpdates,
+        pricesMatched: snapshot.pricesMatched,
+        catalogTotal: snapshot.catalogTotal,
       });
     }
 

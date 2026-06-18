@@ -73,7 +73,7 @@ import {
   saveWbProductCache,
 } from './lib/storage';
 import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';
-import { buildEffectiveWbCache } from '@lib/wb-sync-cache.js';
+import { applyPriceUpdatesToRows, buildEffectiveWbCache, isPricesStale } from '@lib/wb-sync-cache.js';
 import { createRecalcRows } from './lib/recalc-rows-cache';
 import { setProductOverride } from './lib/product-overrides';
 import { readJsonResponse } from './lib/http';
@@ -345,6 +345,7 @@ export default function App() {
   });
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
+  const [priceRefreshing, setPriceRefreshing] = useState(false);
   const [syncSteps, setSyncSteps] = useState(null);
   const [syncStartedAt, setSyncStartedAt] = useState(null);
   const [syncPartialReady, setSyncPartialReady] = useState(false);
@@ -357,6 +358,7 @@ export default function App() {
   const [dashboardQuery, setDashboardQuery] = useState('');
   const skipCloudSave = useRef(true);
   const syncRunId = useRef(0);
+  const priceRefreshStartedRef = useRef(false);
   const persistTimer = useRef(null);
   const pushToCloudRef = useRef(async () => {});
   const workspaceUpdatedAtRef = useRef(workspaceUpdatedAt);
@@ -915,6 +917,60 @@ export default function App() {
     [activeCatalog, purchases]
   );
 
+  const refreshPrices = useCallback(async () => {
+    if (!activeProfile?.token || !baseRows.length || loading || enriching || priceRefreshing) {
+      return false;
+    }
+
+    const cache = buildEffectiveWbCache(wbProductCache, baseRows, syncedAt);
+    if (!cache?.products?.length) return false;
+
+    setPriceRefreshing(true);
+    try {
+      const response = await fetch('/api/unit-calc/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${activeProfile.token}`,
+        },
+        body: JSON.stringify({ phase: 'prices', wbCache: cache }),
+      });
+      const { data } = await readJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(data.error || `Ошибка ${response.status}`);
+      }
+
+      const matched = Number(data.pricesMatched) || 0;
+      if (matched > 0 && data.priceUpdates) {
+        startTransition(() => {
+          setBaseRows((prev) => applyPriceUpdatesToRows(prev, data.priceUpdates));
+          setSyncedAt(data.syncedAt || new Date().toISOString());
+          setMeta((prev) => ({
+            ...prev,
+            pricesSyncedAt: data.pricesSyncedAt || data.syncedAt || prev.pricesSyncedAt,
+          }));
+        });
+        setCloudStatus(
+          `Цены WB обновлены · ${matched} из ${data.catalogTotal || baseRows.length} артикулов`
+        );
+      }
+      return true;
+    } catch (err) {
+      setCloudStatus(`Не удалось обновить цены: ${err.message}`);
+      return false;
+    } finally {
+      setPriceRefreshing(false);
+    }
+  }, [
+    activeProfile,
+    baseRows.length,
+    loading,
+    enriching,
+    priceRefreshing,
+    wbProductCache,
+    syncedAt,
+  ]);
+
   const runSync = useCallback(
     async (mode) => {
       if (!activeProfile?.token) {
@@ -1149,6 +1205,7 @@ export default function App() {
 
   const handleSync = useCallback(() => runSync('quick'), [runSync]);
   const handleFullSync = useCallback(() => runSync('full'), [runSync]);
+  const handleRefreshPrices = useCallback(() => refreshPrices(), [refreshPrices]);
 
   const handleProfileAdded = useCallback(() => {
     changeSection('data');
@@ -1187,7 +1244,28 @@ export default function App() {
     );
   }, [cloudSyncing, loading, enriching, activeProfile?.token, baseRows, meta, runSync]);
 
-  const syncActive = loading || enriching;
+  useEffect(() => {
+    if (cloudSyncing || cloudRefreshing || loading || enriching || priceRefreshing) return;
+    if (!activeProfile?.token || !canSyncWb || !baseRows.length) return;
+    if (!isPricesStale(syncedAt)) return;
+    if (priceRefreshStartedRef.current) return;
+
+    priceRefreshStartedRef.current = true;
+    refreshPrices();
+  }, [
+    cloudSyncing,
+    cloudRefreshing,
+    loading,
+    enriching,
+    priceRefreshing,
+    activeProfile?.token,
+    canSyncWb,
+    baseRows.length,
+    syncedAt,
+    refreshPrices,
+  ]);
+
+  const syncActive = loading || enriching || priceRefreshing;
   const showSyncProgress = Boolean(syncSteps?.length && (syncActive || syncSteps.some((s) => s.status === 'error')));
 
   useEffect(() => {
@@ -1433,6 +1511,13 @@ export default function App() {
                 · каталог от {new Date(meta.fullCatalogAt).toLocaleDateString('ru-RU')}
               </>
             ) : null}
+            {isPricesStale(syncedAt) && !priceRefreshing ? (
+              <>
+                {' '}
+                · <span className="text-amber-800">цены устарели — обновляем…</span>
+              </>
+            ) : null}
+            {priceRefreshing ? ' · обновление цен…' : null}
           </span>
         ) : (
           <span className="text-slate-600">
@@ -1650,7 +1735,8 @@ export default function App() {
             <h2 className="text-sm font-semibold text-slate-800">Синхронизация с WB</h2>
             <p className="mt-1 text-xs text-slate-500">
               <strong>Быстро</strong> — цены, остатки, новые и изменённые карточки.{' '}
-              <strong>Полностью</strong> — весь каталог (~660 SKU), если что-то не подтянулось.
+              <strong>Полностью</strong> — весь каталог (~660 SKU), если что-то не подтянулось.{' '}
+              <strong>Обновить цены</strong> — только колонка «Продажа» с WB (~5–15 сек).
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" className="btn-primary" disabled={syncActive} onClick={handleSync}>
@@ -1658,6 +1744,15 @@ export default function App() {
               </button>
               <button type="button" className="btn-secondary" disabled={syncActive} onClick={handleFullSync}>
                 Полностью
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={syncActive || !baseRows.length || !activeProfile?.token}
+                onClick={handleRefreshPrices}
+                title="Подтянуть актуальные цены продажи с WB Prices API"
+              >
+                {priceRefreshing ? 'Цены…' : 'Обновить цены'}
               </button>
             </div>
             {syncedAt ? (

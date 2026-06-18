@@ -389,9 +389,54 @@ async function fetchCatalogChunkPhase(token, wbCache, catalogCursor, catalogMaxP
   });
 }
 
+/** Только Prices API — обновляет salePrice/basePrice/ourPrice без полной синхронизации. */
+async function fetchPricesPhase(token, wbCache) {
+  return withWbApiToken(token, async () => {
+    const mergedCache = wbCache?.products || [];
+    if (!mergedCache.length) {
+      throw new Error('Нет кэша каталога. Сначала нажмите «Быстро» или «Полностью».');
+    }
+
+    const pricesByNmId = await fetchAllPrices();
+    const realization = wbCache?.realizationSnapshot
+      ? restoreRealizationResult(wbCache.realizationSnapshot)
+      : { byNmId: new Map(), byVendorCode: new Map() };
+
+    const priceUpdates = {};
+    for (const product of mergedCache) {
+      const catalogNmId = Number(product.nmId) || 0;
+      if (!catalogNmId) continue;
+      const reportNmId = resolveReportNmId(realization, catalogNmId, product.vendorCode);
+      const goods =
+        pricesByNmId.get(catalogNmId) ??
+        (reportNmId !== catalogNmId ? pricesByNmId.get(reportNmId) : undefined);
+      const { price: ourPrice, oldPrice } = extractPriceFromGoods(goods);
+      const basePrice = oldPrice || ourPrice;
+      const salePrice = ourPrice || oldPrice;
+      if (salePrice > 0) {
+        priceUpdates[catalogNmId] = {
+          salePrice,
+          basePrice,
+          ourPrice: ourPrice || salePrice,
+        };
+      }
+    }
+
+    const now = new Date().toISOString();
+    return {
+      phase: 'prices',
+      syncedAt: now,
+      pricesSyncedAt: now,
+      priceUpdates,
+      pricesMatched: Object.keys(priceUpdates).length,
+      catalogTotal: mergedCache.length,
+    };
+  });
+}
+
 /**
  * @param {string} token
- * @param {{ mode?: 'quick'|'full'|'bootstrap', phase?: 'catalog'|'data'|'realization', wbCache?: object, catalogCursor?: object, catalogMaxPages?: number, skipRealization?: boolean, realizationOnly?: boolean }} options
+ * @param {{ mode?: 'quick'|'full'|'bootstrap', phase?: 'catalog'|'data'|'realization'|'prices', wbCache?: object, catalogCursor?: object, catalogMaxPages?: number, skipRealization?: boolean, realizationOnly?: boolean }} options
  */
 export async function fetchWbCatalogSnapshot(token, options = {}) {
   if (!hasOfficialWbApi(token)) {
@@ -400,7 +445,13 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
 
   const mode = options.mode === 'full' ? 'full' : options.mode === 'bootstrap' ? 'bootstrap' : 'quick';
   const phase =
-    options.phase === 'catalog' ? 'catalog' : options.phase === 'realization' ? 'realization' : 'data';
+    options.phase === 'catalog'
+      ? 'catalog'
+      : options.phase === 'realization'
+        ? 'realization'
+        : options.phase === 'prices'
+          ? 'prices'
+          : 'data';
   const wbCache = options.wbCache || null;
   const realizationOnly = phase === 'realization' || options.realizationOnly === true;
   const skipRealization = options.skipRealization === true;
@@ -416,6 +467,10 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
       options.catalogCursor || null,
       options.catalogMaxPages ?? 5
     );
+  }
+
+  if (phase === 'prices') {
+    return fetchPricesPhase(token, wbCache);
   }
 
   const cardsFresh = minutesSince(wbCache?.cardsSyncedAt) < 20;

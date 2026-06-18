@@ -6,6 +6,10 @@ import { calculateUnitEconomicsRow } from '../lib/unit-economics/calculator.js';
 import { calcWbLogisticsReportAligned } from '../lib/wb-logistics.js';
 import { compareLogisticsToActual, actualStatsFromRow } from '../lib/logistics-compare.js';
 import { mergeUnitSettings } from '../lib/unit-economics/settings.js';
+import {
+  buildDraftScenarioInput,
+  draftScenarioSettings,
+} from '../wb-unit-calc/src/lib/recalc-rows-cache.js';
 
 const ARTICLE = {
   nmId: 8030700646,
@@ -124,6 +128,42 @@ console.log('\nBreakdown:', {
 
 const noPurchase = calculateUnitEconomicsRow({ ...ARTICLE, purchasePrice: 0 }, baseSettings);
 check('без закупки прибыль не считается', noPurchase.profitFbs == null);
+
+const highPriceInput = {
+  ...ARTICLE,
+  salePrice: 32450,
+  basePrice: 45000,
+  ourPrice: 35000,
+};
+const draftPrice = 7000;
+const draftSettings = draftScenarioSettings({
+  ...baseSettings,
+  preferActualRates: true,
+  salesDistributionIndex: 0.02,
+  includeAcquiring: true,
+});
+const pureDraft = calculateUnitEconomicsRow(
+  { ...ARTICLE, salePrice: draftPrice, basePrice: draftPrice, ourPrice: draftPrice },
+  draftSettings
+);
+const fixedDraft = calculateUnitEconomicsRow(
+  buildDraftScenarioInput(highPriceInput, draftPrice),
+  draftSettings
+);
+const buggyDraft = calculateUnitEconomicsRow(
+  { ...highPriceInput, salePrice: draftPrice },
+  { ...baseSettings, preferActualRates: false, salesDistributionIndex: 0.02, includeAcquiring: true }
+);
+check(
+  'черновик 7000 при продаже 32450 = расчёт чисто по 7000',
+  near(fixedDraft.profitFbs, pureDraft.profitFbs, 2) &&
+    near(fixedDraft.fbsCommissionRub, draftPrice * pureDraft.fbsTotalRate, 5)
+);
+check(
+  'старый баг: basePrice/ourPrice завышали ИРП и эквайринг черновика',
+  fixedDraft.profitFbs > buggyDraft.profitFbs &&
+    near(fixedDraft.logisticsIrpSurcharge ?? fixedDraft.fbsForwardForLogistics - fixedDraft.fbsBaseDelivery, 140, 5)
+);
 
 const fbsOnlyLogistics = calculateUnitEconomicsRow(
   {

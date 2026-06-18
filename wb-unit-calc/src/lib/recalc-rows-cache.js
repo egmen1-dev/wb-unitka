@@ -1,5 +1,5 @@
-import { rowToCalculatorInput } from '@lib/unit-economics/calc-input.js';
-import { calculateUnitEconomicsRow } from '@lib/unit-economics/calculator.js';
+import { rowToCalculatorInput } from '../../../lib/unit-economics/calc-input.js';
+import { calculateUnitEconomicsRow } from '../../../lib/unit-economics/calculator.js';
 import { getProductOverride, mergeRowOverrides } from './product-overrides.js';
 
 const ROW_SIG_KEYS = [
@@ -39,6 +39,30 @@ function overrideSig(overrides, vendor) {
   return `${o.packagingCost ?? ''}\x1f${o.processingCost ?? ''}\x1f${o.extraCosts ?? ''}\x1f${o.draftSalePrice ?? ''}`;
 }
 
+/** Вход «что если» по черновой цене: все ценовые поля и без факта из отчёта. */
+export function buildDraftScenarioInput(calcInput, draftPrice) {
+  return {
+    ...calcInput,
+    salePrice: draftPrice,
+    basePrice: draftPrice,
+    ourPrice: draftPrice,
+    retailPricePerUnit: draftPrice,
+    actualLogisticsRubFbs: null,
+    actualLogisticsRubFbo: null,
+    actualLogisticsRub: null,
+    commissionActualPct: null,
+    actualAcquiringRub: null,
+    actualAcceptanceRub: null,
+    actualProcessingRub: null,
+    actualStorageRub: null,
+  };
+}
+
+/** Черновая цена — сценарий, не факт; считаем тарифы WB, не средние из отчёта. */
+export function draftScenarioSettings(settings) {
+  return { ...settings, preferActualRates: false };
+}
+
 function applyDraftEconomics(calc, calcInput, settings, productOverrides, vendor) {
   const draftRaw = getProductOverride(productOverrides, vendor).draftSalePrice;
   if (draftRaw == null || draftRaw === '') {
@@ -64,7 +88,10 @@ function applyDraftEconomics(calc, calcInput, settings, productOverrides, vendor
     };
   }
 
-  const draftCalc = calculateUnitEconomicsRow({ ...calcInput, salePrice: draftPrice }, settings);
+  const draftCalc = calculateUnitEconomicsRow(
+    buildDraftScenarioInput(calcInput, draftPrice),
+    draftScenarioSettings(settings)
+  );
   return {
     ...calc,
     draftSalePrice: draftPrice,
