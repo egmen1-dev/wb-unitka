@@ -25,6 +25,23 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Verify unit Vercel config
+        run: |
+          node -e "
+            const fs = require('fs');
+            for (const f of ['vercel.json', 'vercel.unit.json']) {
+              const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+              if (!String(c.buildCommand || '').includes('wb-unit-calc') || c.outputDirectory !== 'wb-unit-calc/dist') {
+                console.error(f + ' must build wb-unit-calc, got:', c.buildCommand, c.outputDirectory);
+                process.exit(1);
+              }
+            }
+            if (fs.readFileSync('vercel.json', 'utf8') !== fs.readFileSync('vercel.unit.json', 'utf8')) {
+              console.error('vercel.json must match vercel.unit.json on unit branches');
+              process.exit(1);
+            }
+          "
+
       - name: Deploy to Vercel production
         run: npx vercel@54.11.1 deploy --prod --yes --local-config vercel.unit.json --token "$VERCEL_TOKEN"
         env:
