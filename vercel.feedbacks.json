@@ -14,6 +14,9 @@
     },
     "api/feedbacks/ai-config-check.js": {
       "maxDuration": 10
+    },
+    "api/feedbacks/version.js": {
+      "maxDuration": 10
     }
   },
   "rewrites": [

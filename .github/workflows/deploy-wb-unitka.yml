@@ -11,6 +11,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.repository == 'egmen1-dev/wb-unitka'
     runs-on: ubuntu-latest
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
