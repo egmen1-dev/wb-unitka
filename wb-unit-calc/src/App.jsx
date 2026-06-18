@@ -362,7 +362,7 @@ export default function App() {
   const [ownerClientId, setOwnerClientId] = useState(bootPayload?.ownerClientId ?? null);
   const [workspaceUpdatedAt, setWorkspaceUpdatedAt] = useState(boot.cache?.updatedAt || '');
   const [cloudStatus, setCloudStatus] = useState('');
-  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudSaving, setCloudSaving] = useState(false);
   const [cloudRefreshing, setCloudRefreshing] = useState(false);
   const [cloudPullError, setCloudPullError] = useState('');
 
@@ -514,12 +514,11 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!team || cloudSyncing) return;
+    if (!team) return;
     setTeamAccess((prev) => touchTeamMember(prev, getClientId()));
-  }, [team, cloudSyncing]);
+  }, [team]);
 
   useEffect(() => {
-    if (cloudSyncing) return;
     if (section === 'admin' && !isTeamCreator) {
       changeSectionRaw(firstAllowedSection(myPermissions));
       return;
@@ -527,7 +526,7 @@ export default function App() {
     if (section !== 'team' && section !== 'admin' && team && !canAccessSection(section, myPermissions)) {
       changeSectionRaw(firstAllowedSection(myPermissions));
     }
-  }, [cloudSyncing, section, team, myPermissions, isTeamCreator, changeSectionRaw]);
+  }, [section, team, myPermissions, isTeamCreator, changeSectionRaw]);
 
   useEffect(() => {
     if (!team) {
@@ -583,7 +582,7 @@ export default function App() {
       teamAccess: accessForCloud,
     });
 
-    setCloudSyncing(true);
+    setCloudSaving(true);
     try {
       await saveWorkspaceRemote(team, payload);
       const updatedAt = new Date().toISOString();
@@ -598,7 +597,7 @@ export default function App() {
       }
       throw err;
     } finally {
-      setCloudSyncing(false);
+      setCloudSaving(false);
     }
   }, [
     team,
@@ -712,7 +711,7 @@ export default function App() {
   }, [team, loadTeamWorkspace]);
 
   useEffect(() => {
-    if (!team || cloudSyncing || loading || enriching) return undefined;
+    if (!team || loading || enriching) return undefined;
 
     async function pullRemote() {
       if (skipCloudSave.current) return;
@@ -768,7 +767,7 @@ export default function App() {
       window.removeEventListener('focus', onFocus);
       clearInterval(timer);
     };
-  }, [team, cloudSyncing, loading, enriching, workspaceUpdatedAt]);
+  }, [team, loading, enriching, workspaceUpdatedAt]);
 
   useEffect(() => {
     purgeLegacyStorageKeys();
@@ -862,7 +861,7 @@ export default function App() {
   }, [loading, enriching, wbProductCache]);
 
   useEffect(() => {
-    if (!team || loading || enriching || cloudSyncing || cloudRefreshing) return undefined;
+    if (!team || loading || enriching || cloudSaving || cloudRefreshing) return undefined;
     if (!cloudBootstrappedRef.current || skipCloudSave.current) return undefined;
 
     const generation = ++cloudSaveGenRef.current;
@@ -890,7 +889,7 @@ export default function App() {
     team,
     loading,
     enriching,
-    cloudSyncing,
+    cloudSaving,
     cloudRefreshing,
     pushToCloud,
   ]);
@@ -1393,7 +1392,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (cloudSyncing || suppressAutoSyncRef.current || loading || enriching || !hasOwnWbToken) {
+    if (cloudRefreshing || suppressAutoSyncRef.current || loading || enriching || !hasOwnWbToken) {
       return;
     }
     if (!baseRows.length) return;
@@ -1422,7 +1421,7 @@ export default function App() {
         ? 'full'
         : 'quick'
     );
-  }, [cloudSyncing, loading, enriching, hasOwnWbToken, baseRows, meta, runSync]);
+  }, [cloudRefreshing, loading, enriching, hasOwnWbToken, baseRows, meta, runSync]);
 
   const syncActive = loading || enriching;
   const showSyncProgress = Boolean(syncSteps?.length && (syncActive || syncSteps.some((s) => s.status === 'error')));
@@ -1689,7 +1688,7 @@ export default function App() {
             ) : null}
             {meta.syncMode === 'full' ? 'Полная' : meta.syncMode === 'bootstrap' ? 'Первая' : 'Быстрая'} синхронизация:{' '}
             {new Date(syncedAt).toLocaleString('ru-RU')}
-            {cloudSyncing ? ' · облако…' : cloudRefreshing ? ' · обновление…' : ''}
+            {cloudSaving ? ' · облако…' : cloudRefreshing ? ' · обновление…' : ''}
             {enriching ? ' · догружаем отчёты…' : ''}
             {activeProfile ? ` · кабинет ${activeProfile.name}` : ''}
             {meta.fullCatalogAt ? (
@@ -1717,7 +1716,7 @@ export default function App() {
                 <span aria-hidden>·</span>
               </>
             ) : null}
-            {cloudSyncing ? 'Обновляем облако… · ' : cloudRefreshing ? 'Сверяем облако… · ' : ''}
+            {cloudSaving ? 'Обновляем облако… · ' : cloudRefreshing ? 'Сверяем облако… · ' : ''}
             Загрузите данные с WB или прайс поставщика — таблица расчётов появится ниже.
           </span>
         )

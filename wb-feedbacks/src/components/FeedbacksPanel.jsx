@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/format';
-import { readJsonResponse } from '../lib/http';
+import { DEFAULT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from '../lib/http';
 import {
   clearFeedbacksRateLimit,
+  formatCacheBadge,
+  getCachedFeedbacksList,
   getCachedUnansweredCount,
   getFeedbacksRateLimitSecondsLeft,
   isFeedbacksRateLimited,
+  setCachedFeedbacksList,
   setCachedUnansweredCount,
   setFeedbacksRateLimited,
 } from '../lib/feedbacks-cache';
 
 const PAGE_SIZE = 100;
+const LOADING_WATCHDOG_MS = DEFAULT_FETCH_TIMEOUT_MS;
 
 function Stars({ rating }) {
   const n = Math.max(0, Math.min(5, Number(rating) || 0));
@@ -144,12 +148,34 @@ export default function FeedbacksPanel({ token }) {
   const [expandedId, setExpandedId] = useState(null);
   const [previewId, setPreviewId] = useState(null);
   const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
+  const [cacheBadge, setCacheBadge] = useState('');
   const refreshLockRef = useRef(false);
   const refreshDebounceRef = useRef(null);
   const loadAttemptRef = useRef(0);
   const hasDataRef = useRef(false);
+  const dataRef = useRef(null);
   const loadInFlightRef = useRef(false);
   const autoRetryTimerRef = useRef(null);
+  const abortRef = useRef(null);
+  const loadingWatchdogRef = useRef(null);
+
+  const clearLoadingWatchdog = useCallback(() => {
+    if (loadingWatchdogRef.current) {
+      clearTimeout(loadingWatchdogRef.current);
+      loadingWatchdogRef.current = null;
+    }
+  }, []);
+
+  const startLoadingWatchdog = useCallback(() => {
+    clearLoadingWatchdog();
+    loadingWatchdogRef.current = setTimeout(() => {
+      abortRef.current?.abort();
+      loadInFlightRef.current = false;
+      setLoading(false);
+      setLoadingMore(false);
+      setError('Загрузка заняла слишком много времени (30 сек). Попробуйте ещё раз.');
+    }, LOADING_WATCHDOG_MS);
+  }, [clearLoadingWatchdog]);
 
   const waitForRateLimit = useCallback(async () => {
     if (!isFeedbacksRateLimited()) return;
@@ -180,16 +206,20 @@ export default function FeedbacksPanel({ token }) {
         if (loadAttemptRef.current < 1) {
           loadAttemptRef.current += 1;
           setLoading(true);
+          startLoadingWatchdog();
           try {
             await waitForRateLimit();
-            return loadFeedbacks({ force: true, isRetry: true });
+            return await loadFeedbacks({ force: true, isRetry: true });
           } finally {
+            clearLoadingWatchdog();
             setLoading(false);
           }
         }
         const sec = getFeedbacksRateLimitSecondsLeft();
         setRateLimitCountdown(sec);
         setError(`Слишком много запросов к WB, подождите ${sec} сек`);
+        setLoading(false);
+        loadInFlightRef.current = false;
         return;
       }
 
@@ -200,20 +230,28 @@ export default function FeedbacksPanel({ token }) {
 
       if (append) setLoadingMore(true);
       else {
+        abortRef.current?.abort();
+        abortRef.current = new AbortController();
         loadInFlightRef.current = true;
         setLoading(true);
+        startLoadingWatchdog();
       }
       if (!isRetry && !append) setError('');
       if ((!cachedCount || force) && !append) setStatus('');
       try {
-        const response = await fetch('/api/feedbacks/feedbacks', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
+        const response = await fetchWithTimeout(
+          '/api/feedbacks/feedbacks',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ action: 'list', take: PAGE_SIZE, skip }),
+            signal: abortRef.current?.signal,
           },
-          body: JSON.stringify({ action: 'list', take: PAGE_SIZE, skip }),
-        });
+          LOADING_WATCHDOG_MS
+        );
         const { data: payload } = await readJsonResponse(response);
         if (!response.ok) {
           if (response.status === 429 || payload?.code === 'RATE_LIMIT') {
@@ -240,29 +278,39 @@ export default function FeedbacksPanel({ token }) {
         loadAttemptRef.current = 0;
         setRateLimitCountdown(0);
         hasDataRef.current = true;
-        setData((prev) => {
-          if (!append || !prev) return payload;
-          const seen = new Set((prev.feedbacks || []).map((fb) => fb.id));
-          const merged = [...(prev.feedbacks || [])];
+        let mergedPayload = payload;
+        if (append && dataRef.current) {
+          const seen = new Set((dataRef.current.feedbacks || []).map((fb) => fb.id));
+          const merged = [...(dataRef.current.feedbacks || [])];
           for (const fb of payload.feedbacks || []) {
             if (!seen.has(fb.id)) merged.push(fb);
           }
-          return { ...payload, feedbacks: merged };
+          mergedPayload = { ...payload, feedbacks: merged };
+        }
+        dataRef.current = mergedPayload;
+        setData(mergedPayload);
+        const count = mergedPayload.countUnanswered ?? mergedPayload.feedbacks?.length ?? 0;
+        setCachedFeedbacksList(token, {
+          feedbacks: mergedPayload.feedbacks || [],
+          countUnanswered: count,
+          hasMore: mergedPayload.hasMore ?? count > (mergedPayload.feedbacks?.length || 0),
         });
-        const count = payload.countUnanswered ?? payload.feedbacks?.length ?? 0;
         setCachedUnansweredCount(count);
+        setCacheBadge('');
         setStatus(`Без ответа: ${count}`);
       } catch (err) {
+        if (err?.message === 'Запрос отменён') return;
         setError(err.message || 'Ошибка загрузки');
       } finally {
         if (append) setLoadingMore(false);
         else {
+          clearLoadingWatchdog();
           setLoading(false);
           loadInFlightRef.current = false;
         }
       }
     },
-    [token, waitForRateLimit]
+    [token, waitForRateLimit, startLoadingWatchdog, clearLoadingWatchdog]
   );
 
   const loadMoreFeedbacks = useCallback(() => {
@@ -283,13 +331,49 @@ export default function FeedbacksPanel({ token }) {
   }, [loadFeedbacks, loading]);
 
   useEffect(() => {
-    if (!token) return undefined;
+    if (!token) {
+      setData(null);
+      dataRef.current = null;
+      setCacheBadge('');
+      return undefined;
+    }
+
+    const cached = getCachedFeedbacksList(token);
+    if (cached) {
+      hasDataRef.current = true;
+      const cachedData = {
+        feedbacks: cached.feedbacks || [],
+        countUnanswered: cached.countUnanswered ?? cached.feedbacks?.length ?? 0,
+        hasMore: cached.hasMore ?? false,
+      };
+      dataRef.current = cachedData;
+      setData(cachedData);
+      const badge = formatCacheBadge(cached);
+      setCacheBadge(badge);
+      const count = cached.countUnanswered ?? cached.feedbacks?.length ?? 0;
+      setStatus(badge ? `Без ответа: ${count} · ${badge}` : `Без ответа: ${count}`);
+      setError('');
+      setLoading(false);
+      loadAttemptRef.current = 0;
+      loadFeedbacks({ force: true });
+      return () => {
+        abortRef.current?.abort();
+        clearLoadingWatchdog();
+        if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
+      };
+    }
+
     const cachedCount = getCachedUnansweredCount();
     if (cachedCount != null) setStatus(`Без ответа: ${cachedCount}`);
+    setCacheBadge('');
     loadAttemptRef.current = 0;
     loadFeedbacks();
-    return undefined;
-  }, [token, loadFeedbacks]);
+    return () => {
+      abortRef.current?.abort();
+      clearLoadingWatchdog();
+      if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
+    };
+  }, [token, loadFeedbacks, clearLoadingWatchdog]);
 
   useEffect(() => {
     if (rateLimitCountdown <= 0) return undefined;
@@ -311,8 +395,10 @@ export default function FeedbacksPanel({ token }) {
     () => () => {
       if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
       if (autoRetryTimerRef.current) clearTimeout(autoRetryTimerRef.current);
+      abortRef.current?.abort();
+      clearLoadingWatchdog();
     },
-    []
+    [clearLoadingWatchdog]
   );
 
   const requestDraft = useCallback(
@@ -322,7 +408,7 @@ export default function FeedbacksPanel({ token }) {
       setError('');
       const variationSeed = Date.now() + Math.floor(Math.random() * 10000);
       try {
-        const response = await fetch('/api/feedbacks/feedback-draft', {
+        const response = await fetchWithTimeout('/api/feedbacks/feedback-draft', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -387,7 +473,7 @@ export default function FeedbacksPanel({ token }) {
       setSendingId(feedback.id);
       setError('');
       try {
-        const response = await fetch('/api/feedbacks/feedbacks', {
+        const response = await fetchWithTimeout('/api/feedbacks/feedbacks', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
