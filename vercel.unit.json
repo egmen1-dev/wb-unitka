@@ -1,12 +1,19 @@
 {
   "buildCommand": "node node_modules/vite/bin/vite.js build --config wb-unit-calc/vite.config.js",
   "outputDirectory": "wb-unit-calc/dist",
+  "installCommand": "npm install",
   "framework": null,
   "functions": {
     "api/unit-calc/sync.js": {
       "maxDuration": 300
     },
+    "api/unit-calc/fbs-assembly.js": {
+      "maxDuration": 60
+    },
     "api/unit-calc/supplier-price.js": {
+      "maxDuration": 60
+    },
+    "api/unit-calc/validate-token.js": {
       "maxDuration": 60
     }
   },

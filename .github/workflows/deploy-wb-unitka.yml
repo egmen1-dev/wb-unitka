@@ -26,9 +26,47 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Verify unit Vercel config
+        run: |
+          node -e "
+            const fs = require('fs');
+            for (const f of ['vercel.json', 'vercel.unit.json']) {
+              const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+              const out = String(c.outputDirectory || '');
+              const build = String(c.buildCommand || '');
+              if (out.includes('feedbacks') || build.includes('feedbacks')) {
+                console.error(f + ' must not reference feedbacks (wb-unitka project only):', build, out);
+                process.exit(1);
+              }
+              if (!build.includes('wb-unit-calc') || out !== 'wb-unit-calc/dist') {
+                console.error(f + ' must build wb-unit-calc, got:', build, out);
+                process.exit(1);
+              }
+            }
+            if (fs.readFileSync('vercel.json', 'utf8') !== fs.readFileSync('vercel.unit.json', 'utf8')) {
+              console.error('vercel.json must match vercel.unit.json on unit branches');
+              process.exit(1);
+            }
+          "
+
       - name: Deploy to Vercel production
         run: npx vercel@54.11.1 deploy --prod --yes --local-config vercel.unit.json --token "$VERCEL_TOKEN"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_GIT_COMMIT_SHA: ${{ github.sha }}
           GITHUB_SHA: ${{ github.sha }}
+
+      - name: Verify production serves unit-calc (not feedbacks)
+        run: |
+          for i in 1 2 3 4 5 6; do
+            html=$(curl -fsSL https://wb-unitka.vercel.app || true)
+            echo "$html" | grep -q 'Юнитка WB — калькулятор' && exit 0
+            echo "$html" | grep -q 'Отзывы WB — AI-ответы' && {
+              echo "::error::wb-unitka.vercel.app still serves wb-feedbacks UI"
+              exit 1
+            }
+            echo "Waiting for propagation ($i/6)..."
+            sleep 15
+          done
+          echo "::error::Could not verify unit-calc title on wb-unitka.vercel.app"
+          exit 1

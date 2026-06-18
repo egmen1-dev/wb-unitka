@@ -17,6 +17,7 @@
     "sync:supplier": "python3 wb-unit-economics-sheet/scripts/sync-supplier-prices.py",
     "dev:unit": "node wb-unit-calc/scripts/start-dev.mjs",
     "build:unit": "vite build --config wb-unit-calc/vite.config.js",
+    "deploy:unit": "vercel deploy --prod --local-config vercel.unit.json",
     "dev:feedbacks": "node wb-feedbacks/scripts/start-dev.mjs",
     "build:feedbacks": "vite build --config wb-feedbacks/vite.config.js && cp wb-feedbacks/dist/index.html wb-feedbacks/dist/404.html",
     "deploy:feedbacks": "vercel deploy --prod --local-config vercel.feedbacks.json"
