@@ -77,7 +77,6 @@ import {
   applyPriceUpdatesToRows,
   buildEffectiveWbCache,
   isRealizationStale,
-  mergeSyncRowsPreservingLocalPrices,
   mergeWorkspaceRowsPreservingLocalPrices,
   resolveRealizationSyncedAt,
   shouldSkipRealizationFetch,
@@ -813,13 +812,7 @@ export default function App() {
   const applySyncResult = useCallback(
     (data, { urgent = false } = {}) => {
       const commit = () => {
-      setBaseRows((prev) =>
-        mergeSyncRowsPreservingLocalPrices(
-          mergeRowAdFields(prev, slimRowsForCache(data.rows)),
-          prev,
-          metaRef.current?.pricesSyncedAt
-        )
-      );
+      setBaseRows((prev) => mergeRowAdFields(prev, slimRowsForCache(data.rows)));
       setSyncedAt(data.syncedAt);
       if (data.productCache?.length || data.tariffCache || data.realizationSnapshot) {
         setWbProductCache((prev) => ({
@@ -983,23 +976,56 @@ export default function App() {
     [activeCatalog, purchases]
   );
 
-  const refreshPrices = useCallback(async () => {
-    if (!activeProfile?.token || !baseRows.length || loading || enriching || priceRefreshing) {
+  const refreshPrices = useCallback(async ({ manual = false } = {}) => {
+    if (!activeProfile?.token) {
+      const msg = 'Нет WB API токена — добавьте ключ в разделе «Данные»';
+      setCloudStatus(msg);
+      setMeta((prev) => ({ ...prev, pricesSyncError: msg }));
+      return false;
+    }
+    if (!baseRows.length) {
+      const msg = 'Нет строк в таблице — сначала нажмите «Быстро»';
+      setCloudStatus(msg);
+      setMeta((prev) => ({ ...prev, pricesSyncError: msg }));
+      return false;
+    }
+    if (loading || enriching || priceRefreshing) {
       return false;
     }
 
     const cache = buildEffectiveWbCache(wbProductCache, baseRows, syncedAt);
-    if (!cache?.products?.length) return false;
+    if (!cache?.products?.length) {
+      const msg = 'Нет кэша карточек — нажмите «Быстро» или «Полностью»';
+      setCloudStatus(msg);
+      setMeta((prev) => ({ ...prev, pricesSyncError: msg }));
+      return false;
+    }
 
     setPriceRefreshing(true);
+    setMeta((prev) => ({ ...prev, pricesSyncError: null }));
     try {
+      const priceRows = baseRowsRef.current.map((row) => ({
+        nmId: row.nmId,
+        vendorCode: row.vendorCode,
+        salePrice: row.salePrice,
+        basePrice: row.basePrice,
+        ourPrice: row.ourPrice,
+      }));
       const response = await fetch('/api/unit-calc/sync', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${activeProfile.token}`,
         },
-        body: JSON.stringify({ phase: 'prices', wbCache: cache, rows: baseRowsRef.current }),
+        body: JSON.stringify({
+          phase: 'prices',
+          wbCache: {
+            products: cache.products,
+            realizationSnapshot: cache.realizationSnapshot || null,
+            realizationSyncedAt: cache.realizationSyncedAt || null,
+          },
+          rows: priceRows,
+        }),
       });
       const { data } = await readJsonResponse(response);
       if (!response.ok) {
@@ -1009,46 +1035,72 @@ export default function App() {
       const matched = Number(data.pricesMatched) || 0;
       const pricesUpdated = Number(data.pricesUpdated) || 0;
       const pricesUnchanged = Number(data.pricesUnchanged) || 0;
+      const pricesMissing = Number(data.pricesMissing) || 0;
 
       if (matched > 0) {
-        const pricesSyncedAt = data.pricesSyncedAt || data.syncedAt || new Date().toISOString();
         lastLocalPriceRefreshAtRef.current = Date.now();
 
         if (pricesUpdated > 0 && data.priceUpdates && Object.keys(data.priceUpdates).length > 0) {
-          const { rows: nextRows } = applyPriceUpdatesToRows(baseRowsRef.current, data.priceUpdates);
+          const prevRows = baseRowsRef.current;
+          const { rows: nextRows } = applyPriceUpdatesToRows(prevRows, data.priceUpdates);
+          const pricesSyncedAt = data.pricesSyncedAt || data.syncedAt || new Date().toISOString();
+          baseRowsRef.current = nextRows;
+          metaRef.current = {
+            ...metaRef.current,
+            pricesSyncedAt,
+            pricesLastUpdated: pricesUpdated,
+            pricesLastUnchanged: pricesUnchanged,
+            pricesLastMissing: pricesMissing,
+            pricesSyncError: null,
+          };
           setBaseRows(nextRows);
           setProductOverrides((prev) =>
-            reconcileDraftOverridesAfterPricePatch(baseRowsRef.current, data.priceUpdates, prev)
+            reconcileDraftOverridesAfterPricePatch(prevRows, data.priceUpdates, prev)
           );
-        }
-
-        setSyncedAt(data.syncedAt || pricesSyncedAt);
-        setMeta((prev) => ({
-          ...prev,
-          pricesSyncedAt,
-          pricesLastUpdated: pricesUpdated,
-          pricesLastUnchanged: pricesUnchanged,
-        }));
-
-        if (pricesUpdated > 0) {
+          setSyncedAt(data.syncedAt || pricesSyncedAt);
+          setMeta((prev) => ({
+            ...prev,
+            pricesSyncedAt,
+            pricesLastUpdated: pricesUpdated,
+            pricesLastUnchanged: pricesUnchanged,
+            pricesLastMissing: pricesMissing,
+            pricesSyncError: null,
+          }));
           setCloudStatus(
             `Обновлено ${pricesUpdated} цен WB · проверено ${matched}` +
-              (pricesUnchanged > 0 ? ` · без изменений ${pricesUnchanged}` : '')
+              (pricesUnchanged > 0 ? ` · без изменений ${pricesUnchanged}` : '') +
+              (pricesMissing > 0 ? ` · не найдено ${pricesMissing}` : '')
           );
-          pushToCloudRef.current().catch(() => {});
-        } else {
-          setCloudStatus(
-            `Проверено ${matched} цен WB · без изменений` +
-              (pricesUnchanged > 0 ? ` (${pricesUnchanged})` : '')
-          );
+          return true;
         }
+
+        const unchangedMsg =
+          `Проверено ${matched} цен WB · без изменений` +
+          (pricesUnchanged > 0 ? ` (${pricesUnchanged})` : '') +
+          (pricesMissing > 0 ? ` · не найдено в API ${pricesMissing}` : '');
+        setCloudStatus(unchangedMsg);
+        setMeta((prev) => ({
+          ...prev,
+          pricesLastChecked: data.pricesSyncedAt || data.syncedAt || new Date().toISOString(),
+          pricesLastUnchanged: pricesUnchanged,
+          pricesLastMissing: pricesMissing,
+          pricesSyncError: null,
+        }));
         return true;
       }
 
-      setCloudStatus('WB Prices API не вернул цены — проверьте токен (Prices) и нажмите «Обновить цены»');
+      const failMsg =
+        pricesMissing > 0
+          ? `WB Prices API: не найдено цен для ${pricesMissing} товаров — проверьте токен (Prices)`
+          : 'WB Prices API не вернул цены — проверьте токен (Prices) и нажмите «Обновить цены»';
+      setCloudStatus(failMsg);
+      setMeta((prev) => ({ ...prev, pricesSyncError: failMsg }));
       return false;
     } catch (err) {
-      setCloudStatus(`Не удалось обновить цены: ${err.message}`);
+      const msg = `Не удалось обновить цены: ${err.message}`;
+      setCloudStatus(msg);
+      setMeta((prev) => ({ ...prev, pricesSyncError: msg }));
+      if (manual) console.warn('[unit-calc] price refresh failed:', err.message);
       return false;
     } finally {
       setPriceRefreshing(false);
@@ -1311,7 +1363,10 @@ export default function App() {
 
   const handleSync = useCallback(() => runSync('quick'), [runSync]);
   const handleFullSync = useCallback(() => runSync('full'), [runSync]);
-  const handleRefreshPrices = useCallback(() => refreshPrices(), [refreshPrices]);
+  const handleRefreshPrices = useCallback(() => {
+    priceRefreshStartedRef.current = false;
+    return refreshPrices({ manual: true });
+  }, [refreshPrices]);
 
   const handleProfileAdded = useCallback(() => {
     changeSection('data');
@@ -1667,6 +1722,32 @@ export default function App() {
               </>
             ) : null}
             {priceRefreshing ? ' · обновление цен…' : null}
+            {meta.pricesSyncedAt ? (
+              <>
+                {' '}
+                · цены WB{' '}
+                {new Date(meta.pricesSyncedAt).toLocaleString('ru-RU', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </>
+            ) : null}
+            {cloudStatus ? (
+              <>
+                {' '}
+                ·{' '}
+                <span className={meta.pricesSyncError ? 'text-rose-700' : 'text-emerald-700'}>
+                  {cloudStatus}
+                </span>
+              </>
+            ) : meta.pricesSyncError ? (
+              <>
+                {' '}
+                · <span className="text-rose-700">{meta.pricesSyncError}</span>
+              </>
+            ) : null}
           </span>
         ) : (
           <span className="text-slate-600">

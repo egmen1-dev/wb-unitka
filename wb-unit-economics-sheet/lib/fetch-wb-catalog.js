@@ -30,6 +30,7 @@ import {
   serializeRealizationResult,
   serializeRealizationVendorSales,
 } from '../../lib/wb-realization-stats.js';
+import { vendorLookupKeys } from '../../lib/unit-economics/vendor-key.js';
 import {
   fetchFbsAssemblyOrderStats,
   resolvePrimaryFbsShipmentContext,
@@ -401,6 +402,14 @@ async function fetchCatalogChunkPhase(token, wbCache, catalogCursor, catalogMaxP
   });
 }
 
+function lookupCacheProductByVendor(cacheByVendor, vendorCode) {
+  for (const key of vendorLookupKeys(vendorCode)) {
+    const hit = cacheByVendor.get(key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /** Только Prices API — обновляет salePrice/basePrice/ourPrice без полной синхронизации. */
 function collectPriceRefreshItems(rows, cacheProducts) {
   const cacheByVendor = new Map();
@@ -408,7 +417,11 @@ function collectPriceRefreshItems(rows, cacheProducts) {
   for (const product of cacheProducts || []) {
     const vendor = String(product.vendorCode || '').trim();
     const nmId = Number(product.nmId) || 0;
-    if (vendor) cacheByVendor.set(vendor, product);
+    if (vendor) {
+      for (const key of vendorLookupKeys(vendor)) {
+        if (!cacheByVendor.has(key)) cacheByVendor.set(key, product);
+      }
+    }
     if (nmId) cacheByNm.set(nmId, product);
   }
 
@@ -416,7 +429,7 @@ function collectPriceRefreshItems(rows, cacheProducts) {
   const add = (item) => {
     let vendor = String(item?.vendorCode || '').trim();
     let nmId = Number(item?.nmId) || 0;
-    if (!nmId && vendor) nmId = Number(cacheByVendor.get(vendor)?.nmId) || 0;
+    if (!nmId && vendor) nmId = Number(lookupCacheProductByVendor(cacheByVendor, vendor)?.nmId) || 0;
     if (!vendor && nmId) vendor = String(cacheByNm.get(nmId)?.vendorCode || '').trim();
     const key = vendor || String(nmId);
     if (!key) return;
@@ -463,6 +476,10 @@ async function fetchPricesPhase(token, wbCache, rows = []) {
       realization,
       pricesByVendor
     );
+
+    if (!pricesByNmId.size) {
+      throw new Error('WB Prices API вернул пустой список — проверьте токен (категория Prices)');
+    }
 
     const delta =
       rows?.length > 0

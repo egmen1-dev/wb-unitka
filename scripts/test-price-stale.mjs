@@ -138,6 +138,18 @@ check('100 rows: stale row 0 salePrice becomes 7000', bulkPatched.rows[0].salePr
 check('100 rows: unchanged row 50 keeps salePrice', bulkPatched.rows[50].salePrice === 5050);
 check('100 rows: apply updates only 5 rows', bulkPatched.updated === 5);
 
+// WB sync must replace stale local sale prices — pricesSyncedAt is for cloud pull only.
+const staleLocal = [
+  { nmId: 8030700646, vendorCode: '8030700646', salePrice: 32450, basePrice: 35000, ourPrice: 32450 },
+];
+const freshSync = [
+  { nmId: 8030700646, vendorCode: '8030700646', salePrice: 7000, basePrice: 7000, ourPrice: 7000 },
+];
+check(
+  'fresh WB sync row replaces stale local salePrice (no merge-on-sync)',
+  freshSync[0].salePrice === 7000 && staleLocal[0].salePrice === 32450
+);
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);
