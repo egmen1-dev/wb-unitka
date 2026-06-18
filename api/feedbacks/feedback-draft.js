@@ -251,6 +251,9 @@ export default async function handler(req, res) {
     premiumUpsell,
     candidates,
     validation,
-    hint: aiHint({ yandexConfigured, openaiConfigured: Boolean(openaiKey) }),
+    hint:
+      provider === 'template'
+        ? aiHint({ yandexConfigured, openaiConfigured: Boolean(openaiKey) })
+        : undefined,
   });
 }

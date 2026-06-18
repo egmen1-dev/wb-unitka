@@ -128,14 +128,87 @@ function formatRateLimitError(payload, status) {
   return null;
 }
 
-function formatAiConfigLabel({ yandexConfigured, openaiConfigured, loading }) {
+function formatAiConfigLabel({ yandexConfigured, openaiConfigured, loading, apiCheckStatus }) {
   if (loading) return 'Проверка настроек AI на сервере…';
   if (yandexConfigured && openaiConfigured) {
     return 'AI: YandexGPT и OpenAI подключены на сервере';
   }
   if (yandexConfigured) return 'AI: YandexGPT подключён на сервере';
   if (openaiConfigured) return 'AI: OpenAI подключён на сервере';
+  if (apiCheckStatus === 'html') {
+    return 'AI: API не отвечает JSON — проверьте деплой';
+  }
   return 'AI не настроен на сервере — используется шаблон';
+}
+
+function formatApiCheckDiagnostic({ apiCheckStatus, endpoint, error }) {
+  if (apiCheckStatus === 'loading') return 'API ai-config-check: проверка…';
+  if (apiCheckStatus === 'ok') {
+    return `API ai-config-check: OK (${endpoint || 'feedbacks-check'})`;
+  }
+  if (apiCheckStatus === 'inferred') {
+    return 'API ai-config-check: OK (подтверждено генерацией черновика)';
+  }
+  if (apiCheckStatus === 'html') {
+    return 'API ai-config-check: HTML вместо JSON — переразверните проект';
+  }
+  if (apiCheckStatus === 'error') {
+    return `API ai-config-check: ошибка${error ? ` — ${error}` : ''}`;
+  }
+  return 'API ai-config-check: 404 / недоступен';
+}
+
+async function fetchAiConfigStatus() {
+  const endpoints = [
+    { path: '/api/feedbacks/feedbacks-check', label: 'feedbacks-check' },
+    { path: '/api/feedbacks/ai-config-check', label: 'ai-config-check' },
+  ];
+
+  let lastHtmlError = null;
+
+  for (const { path, label } of endpoints) {
+    try {
+      const response = await fetchWithTimeout(path, { method: 'GET' });
+      const { data: payload } = await readJsonResponse(response);
+      if (!response.ok) continue;
+      if (payload?.action === 'ai-config' || payload?.yandexConfigured != null) {
+        return {
+          yandexConfigured: Boolean(payload?.yandexConfigured),
+          openaiConfigured: Boolean(payload?.openaiConfigured),
+          envPresent: payload?.envPresent || null,
+          loading: false,
+          error: '',
+          apiCheckStatus: 'ok',
+          endpoint: label,
+        };
+      }
+    } catch (err) {
+      if (err?.raw?.startsWith?.('<!DOCTYPE') || err?.raw?.startsWith?.('<html')) {
+        lastHtmlError = {
+          yandexConfigured: false,
+          openaiConfigured: false,
+          envPresent: null,
+          loading: false,
+          error: err.message || 'Сервер вернул HTML вместо JSON',
+          apiCheckStatus: 'html',
+          endpoint: label,
+        };
+        continue;
+      }
+    }
+  }
+
+  if (lastHtmlError) return lastHtmlError;
+
+  return {
+    yandexConfigured: false,
+    openaiConfigured: false,
+    envPresent: null,
+    loading: false,
+    error: 'Не удалось проверить AI на сервере',
+    apiCheckStatus: 'error',
+    endpoint: '',
+  };
 }
 
 function formatDraftStatus(payload, { regenerate = false } = {}) {
@@ -179,6 +252,8 @@ export default function FeedbacksPanel({ token }) {
     envPresent: null,
     loading: true,
     error: '',
+    apiCheckStatus: 'loading',
+    endpoint: '',
   });
   const [cacheBadge, setCacheBadge] = useState('');
   const refreshLockRef = useRef(false);
@@ -366,38 +441,8 @@ export default function FeedbacksPanel({ token }) {
     let cancelled = false;
 
     (async () => {
-      try {
-        const response = await fetchWithTimeout('/api/feedbacks/ai-config-check', { method: 'GET' });
-        const { data: payload } = await readJsonResponse(response);
-        if (cancelled) return;
-        if (!response.ok) {
-          setAiConfig({
-            yandexConfigured: false,
-            openaiConfigured: false,
-            envPresent: null,
-            loading: false,
-            error: 'Сервер вернул ошибку при проверке AI',
-          });
-          return;
-        }
-        setAiConfig({
-          yandexConfigured: Boolean(payload?.yandexConfigured),
-          openaiConfigured: Boolean(payload?.openaiConfigured),
-          envPresent: payload?.envPresent || null,
-          loading: false,
-          error: '',
-        });
-      } catch (err) {
-        if (!cancelled) {
-          setAiConfig({
-            yandexConfigured: false,
-            openaiConfigured: false,
-            envPresent: null,
-            loading: false,
-            error: err?.message || 'Не удалось проверить AI на сервере',
-          });
-        }
-      }
+      const result = await fetchAiConfigStatus();
+      if (!cancelled) setAiConfig(result);
     })();
 
     return () => {
@@ -504,6 +549,16 @@ export default function FeedbacksPanel({ token }) {
             hint: payload.hint,
           },
         }));
+        if (payload.provider === 'yandex' || payload.provider === 'openai') {
+          setAiConfig((prev) => ({
+            ...prev,
+            yandexConfigured: prev.yandexConfigured || payload.provider === 'yandex' || payload.yandexConfigured,
+            openaiConfigured: prev.openaiConfigured || payload.provider === 'openai' || payload.openaiConfigured,
+            loading: false,
+            error: '',
+            apiCheckStatus: prev.apiCheckStatus === 'ok' ? 'ok' : 'inferred',
+          }));
+        }
         setExpandedId(feedback.id);
         setStatus(formatDraftStatus(payload, { regenerate }));
       } catch (err) {
@@ -627,6 +682,9 @@ export default function FeedbacksPanel({ token }) {
             {formatAiConfigLabel(aiConfig)}
           </summary>
           <div className="mt-2 space-y-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-slate-600">
+            <p className="font-mono text-[10px] text-slate-500">
+              {formatApiCheckDiagnostic(aiConfig)}
+            </p>
             <p>
               <span className="font-medium text-slate-700">YandexGPT: </span>
               {aiConfig.loading
@@ -637,9 +695,18 @@ export default function FeedbacksPanel({ token }) {
             </p>
             {!aiConfig.loading && !aiConfig.yandexConfigured ? (
               <p>
-                В Vercel задайте <code className="rounded bg-white px-1">YANDEX_GPT_API_KEY</code> или{' '}
-                <code className="rounded bg-white px-1">YANDEX_CLOUD_API_KEY</code> и{' '}
-                <code className="rounded bg-white px-1">YANDEX_FOLDER_ID</code>.
+                {aiConfig.apiCheckStatus === 'html' ? (
+                  <>
+                    Эндпоинт проверки AI не развёрнут — переразверните проект в Vercel. Если после деплоя
+                    генерация черновиков работает (YandexGPT), ключи уже заданы.
+                  </>
+                ) : (
+                  <>
+                    В Vercel задайте <code className="rounded bg-white px-1">YANDEX_GPT_API_KEY</code> или{' '}
+                    <code className="rounded bg-white px-1">YANDEX_CLOUD_API_KEY</code> и{' '}
+                    <code className="rounded bg-white px-1">YANDEX_FOLDER_ID</code>.
+                  </>
+                )}
               </p>
             ) : null}
             <p>
