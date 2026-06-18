@@ -43,7 +43,7 @@ jobs:
                 process.exit(1);
               }
             }
-            if (fs.readFileSync('vercel.json', 'utf8') !== fs.readFileSync('vercel.unit.json', 'utf8')) {
+            if (JSON.stringify(JSON.parse(fs.readFileSync('vercel.json', 'utf8'))) !== JSON.stringify(JSON.parse(fs.readFileSync('vercel.unit.json', 'utf8')))) {
               console.error('vercel.json must match vercel.unit.json on unit branches');
               process.exit(1);
             }
