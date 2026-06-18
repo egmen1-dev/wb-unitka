@@ -31,6 +31,7 @@ export default function ApiKeyPanel({
   onProfilesChange,
   onActiveChange,
   onProfileAdded,
+  onProfileRemove,
   teamMode = false,
   tokenInvalid = false,
   tokenInvalidMessage = '',
@@ -81,7 +82,16 @@ export default function ApiKeyPanel({
     }
   }
 
-  function removeProfile(id) {
+  function removeProfile(id, event) {
+    event?.stopPropagation();
+    if (onProfileRemove) {
+      onProfileRemove(id);
+      return;
+    }
+    const target = profiles.find((p) => p.id === id);
+    if (!target) return;
+    if (!window.confirm(`Удалить ключ «${target.name}»?`)) return;
+
     const next = profiles.filter((p) => p.id !== id);
     onProfilesChange(next);
     if (activeProfileId === id) {
@@ -146,7 +156,7 @@ export default function ApiKeyPanel({
               <button
                 type="button"
                 className="text-xs text-rose-600 hover:underline"
-                onClick={() => removeProfile(profile.id)}
+                onClick={(event) => removeProfile(profile.id, event)}
               >
                 удалить
               </button>

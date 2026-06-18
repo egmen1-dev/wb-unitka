@@ -13,6 +13,7 @@ import RegionsPanel from './components/RegionsPanel';
 import ReturnsPanel from './components/ReturnsPanel';
 import FbsAssemblyPanel from './components/FbsAssemblyPanel';
 import FeedbacksExternalLink from './components/FeedbacksExternalLink';
+import TeamUrlBanner from './components/TeamUrlBanner';
 import WbTokenBanner from './components/WbTokenBanner';
 import SupplierPricePanel from './components/SupplierPricePanel';
 import TeamPanel from './components/TeamPanel';
@@ -31,7 +32,7 @@ import {
   resolveMyPermissions,
   touchTeamMember,
 } from '@lib/team-permissions.js';
-import { mergeWorkspaceProfiles } from '@lib/workspace-merge.js';
+import { mergeWorkspaceProfiles, reconcileProfilesForPull } from '@lib/workspace-merge.js';
 import {
   readSectionFromUrl,
   resolveInitialSection,
@@ -42,9 +43,12 @@ import {
   buildWorkspacePayload,
   buildShareUrl,
   createWorkspace,
+  ensureTeamInUrl,
   fetchWorkspace,
   getTeamFromUrl,
+  isTeamInUrl,
   loadStoredTeam,
+  removeTeamFromUrl,
   saveStoredTeam,
   saveWorkspaceRemote,
 } from './lib/workspace-api';
@@ -56,6 +60,7 @@ import {
 import {
   loadActiveProfileId,
   loadProfiles,
+  loadDeletedProfileIds,
   loadProductOverrides,
   loadPurchases,
   loadSettings,
@@ -66,6 +71,10 @@ import {
   clearWorkspaceCache,
   saveActiveProfileId,
   saveProfiles,
+  saveDeletedProfileIds,
+  addDeletedProfileId,
+  pruneDeletedProfileIds,
+  normalizeProfiles,
   saveProductOverrides,
   savePurchases,
   saveSettings,
@@ -90,9 +99,15 @@ function applyWbAuthError(err, { setError, setTokenInvalid }) {
 }
 
 function readBootCache() {
-  const team = getTeamFromUrl() || loadStoredTeam() || '';
+  const urlTeam = getTeamFromUrl();
+  const storedTeam = loadStoredTeam() || '';
+  const team = urlTeam || storedTeam;
+  const teamWasMissingFromUrl = Boolean(team && !urlTeam);
+  if (teamWasMissingFromUrl) {
+    ensureTeamInUrl(team);
+  }
   const cache = team ? loadWorkspaceCache(team) : null;
-  return { team, cache };
+  return { team, cache, teamWasMissingFromUrl };
 }
 
 function saveWorkspaceSnapshot(teamCode, data) {
@@ -190,10 +205,13 @@ function mergeRowAdFields(prevRows, nextRows) {
 function bootProfiles(bootPayload) {
   const teamProfiles = bootPayload?.profiles;
   const localProfiles = loadProfiles();
+  let merged;
   if (teamProfiles?.length || localProfiles?.length) {
-    return mergeWorkspaceProfiles(localProfiles, teamProfiles);
+    merged = mergeWorkspaceProfiles(localProfiles, teamProfiles);
+  } else {
+    merged = [];
   }
-  return [];
+  return normalizeProfiles(merged).profiles;
 }
 
 function bootActiveProfileId(bootPayload, profiles) {
@@ -206,18 +224,29 @@ function bootActiveProfileId(bootPayload, profiles) {
   return '';
 }
 
-function applyWorkspacePayload(payload, setters, { keepRows = [], keepProfiles = [] } = {}) {
+function applyWorkspacePayload(
+  payload,
+  setters,
+  { keepRows = [], keepProfiles = [], deletedProfileIds = [], preferLocalTokens = false } = {}
+) {
   if (!payload) return;
   if (payload.ownerClientId != null) setters.setOwnerClientId(payload.ownerClientId);
 
-  const mergedProfiles = mergeWorkspaceProfiles(keepProfiles, payload.profiles);
-  if (mergedProfiles.length) {
+  const deletedIds = new Set(deletedProfileIds);
+  const mergedProfiles = keepProfiles?.length
+    ? reconcileProfilesForPull(keepProfiles, payload.profiles, { deletedIds, preferLocalTokens })
+    : mergeWorkspaceProfiles([], payload.profiles).filter((profile) => !deletedIds.has(profile?.id));
+
+  if (keepProfiles?.length || mergedProfiles.length) {
     setters.setProfiles(mergedProfiles);
     const activeId =
       [payload.activeProfileId, keepProfiles.find((p) => p.token)?.id, mergedProfiles[0]?.id].find(
         (id) => id && mergedProfiles.some((profile) => profile.id === id)
       ) || '';
     if (activeId) setters.setActiveProfileId(activeId);
+  } else if (Array.isArray(payload.profiles) && payload.profiles.length === 0) {
+    setters.setProfiles([]);
+    setters.setActiveProfileId('');
   }
 
   if (payload.purchases !== undefined) {
@@ -288,6 +317,8 @@ export default function App() {
 
   const [team, setTeam] = useState(boot.team);
   const [teamName, setTeamName] = useState(boot.cache?.teamName || '');
+  const [teamUrlMissing, setTeamUrlMissing] = useState(false);
+  const bootTeamUrlMissing = useRef(boot.teamWasMissingFromUrl);
   const [ownerClientId, setOwnerClientId] = useState(bootPayload?.ownerClientId ?? null);
   const [workspaceUpdatedAt, setWorkspaceUpdatedAt] = useState(boot.cache?.updatedAt || '');
   const [cloudStatus, setCloudStatus] = useState('');
@@ -330,9 +361,9 @@ export default function App() {
 
   const changeSectionRaw = useCallback((id) => {
     setSectionState(id);
-    writeSectionToUrl(id);
+    writeSectionToUrl(id, { teamCode: team });
     saveStoredSection(id);
-  }, []);
+  }, [team]);
 
   const [baseRows, setBaseRows] = useState(() => {
     const rows = bootPayload?.cache?.rows;
@@ -376,6 +407,7 @@ export default function App() {
   baseRowsRef.current = baseRows;
   const profilesRef = useRef(profiles);
   profilesRef.current = profiles;
+  const deletedProfileIdsRef = useRef(loadDeletedProfileIds());
 
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeProfileId) || profiles[0],
@@ -448,7 +480,17 @@ export default function App() {
   }, [cloudSyncing, section, team, myPermissions, isTeamCreator, changeSectionRaw]);
 
   useEffect(() => {
-    writeSectionToUrl(section);
+    if (!team) {
+      setTeamUrlMissing(false);
+      return;
+    }
+    const missing = !isTeamInUrl(team);
+    setTeamUrlMissing(missing);
+    if (missing) ensureTeamInUrl(team);
+  }, [team]);
+
+  useEffect(() => {
+    writeSectionToUrl(section, { teamCode: team });
   }, []);
 
   useEffect(() => {
@@ -459,7 +501,7 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  const pushToCloud = useCallback(async () => {
+  const pushToCloud = useCallback(async (overrides = {}) => {
     if (!team || skipCloudSave.current) return;
 
     const accessForCloud = isTeamCreator
@@ -470,9 +512,12 @@ export default function App() {
       setTeamAccess(accessForCloud);
     }
 
+    const profilesForCloud = overrides.profiles ?? profiles;
+    const activeForCloud = overrides.activeProfileId ?? activeProfileId;
+
     const payload = buildWorkspacePayload({
-      profiles,
-      activeProfileId,
+      profiles: profilesForCloud,
+      activeProfileId: activeForCloud,
       purchases,
       settings,
       settingsUpdatedAt,
@@ -531,7 +576,7 @@ export default function App() {
           setMeta,
           setWbProductCache,
         },
-        { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current }
+        { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current, deletedProfileIds: deletedProfileIdsRef.current }
       );
       if (hadLocalRows && cloudEmpty) {
         setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
@@ -595,7 +640,7 @@ export default function App() {
             setMeta,
             setWbProductCache,
           },
-          { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current }
+          { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current, deletedProfileIds: deletedProfileIdsRef.current }
         );
         if (hadLocalRows && cloudEmpty) {
           setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
@@ -618,11 +663,18 @@ export default function App() {
 
   useEffect(() => {
     purgeLegacyStorageKeys();
+    const { profiles: normalized, changed } = normalizeProfiles(profiles);
+    if (changed && normalized.length) {
+      setProfiles(normalized);
+      saveProfiles(normalized);
+      return;
+    }
     if (profiles.length) return;
     const localProfiles = loadProfiles();
     if (!localProfiles.length) return;
-    setProfiles(localProfiles);
-    setActiveProfileId(bootActiveProfileId({}, localProfiles));
+    const restored = normalizeProfiles(localProfiles).profiles;
+    setProfiles(restored);
+    setActiveProfileId(bootActiveProfileId({}, restored));
     setCloudStatus('API-ключ восстановлен из локального хранилища браузера');
   }, []);
 
@@ -1129,6 +1181,45 @@ export default function App() {
     changeSection('data');
     runSync('quick');
   }, [runSync]);
+
+  const handleProfileRemove = useCallback(
+    async (id) => {
+      const target = profiles.find((p) => p.id === id);
+      if (!target) return;
+      if (!window.confirm(`Удалить ключ «${target.name}»?`)) return;
+
+      deletedProfileIdsRef.current = addDeletedProfileId(id);
+
+      const nextProfiles = profiles.filter((p) => p.id !== id);
+      const nextActive = activeProfileId === id ? nextProfiles[0]?.id || '' : activeProfileId;
+
+      profilesRef.current = nextProfiles;
+      setProfiles(nextProfiles);
+      if (nextActive !== activeProfileId) setActiveProfileId(nextActive);
+
+      saveProfiles(nextProfiles);
+      saveActiveProfileId(nextActive);
+      setCloudStatus(`Ключ «${target.name}» удалён`);
+
+      if (persistTimer.current) {
+        clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+
+      if (team && !skipCloudSave.current) {
+        try {
+          await pushToCloud({ profiles: nextProfiles, activeProfileId: nextActive });
+          deletedProfileIdsRef.current = pruneDeletedProfileIds(
+            deletedProfileIdsRef.current,
+            nextProfiles.map((p) => p.id)
+          );
+        } catch (err) {
+          setCloudStatus(`Ключ удалён локально; облако: ${err.message}`);
+        }
+      }
+    },
+    [profiles, activeProfileId, team, pushToCloud]
+  );
 
   useEffect(() => {
     if (cloudSyncing || suppressAutoSyncRef.current || loading || enriching || !activeProfile?.token) {
@@ -1646,6 +1737,7 @@ export default function App() {
             onProfilesChange={setProfiles}
             onActiveChange={setActiveProfileId}
             onProfileAdded={handleProfileAdded}
+            onProfileRemove={handleProfileRemove}
             teamMode={Boolean(team)}
             tokenInvalid={tokenInvalid}
             tokenInvalidMessage={error}

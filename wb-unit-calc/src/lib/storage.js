@@ -1,6 +1,7 @@
 const KEYS = {
   profiles: 'wb-unit-calc:profiles',
   activeProfileId: 'wb-unit-calc:active-profile',
+  deletedProfileIds: 'wb-unit-calc:deleted-profile-ids',
   purchases: 'wb-unit-calc:purchases',
   settings: 'wb-unit-calc:settings',
   supplierCatalogs: 'wb-unit-calc:supplier-catalogs',
@@ -43,6 +44,51 @@ export function loadActiveProfileId() {
 export function saveActiveProfileId(id) {
   if (id) localStorage.setItem(KEYS.activeProfileId, id);
   else localStorage.removeItem(KEYS.activeProfileId);
+}
+
+export function loadDeletedProfileIds() {
+  const raw = readJson(KEYS.deletedProfileIds, []);
+  return Array.isArray(raw) ? raw.filter(Boolean) : [];
+}
+
+export function saveDeletedProfileIds(ids) {
+  const list = [...new Set((ids || []).filter(Boolean))];
+  if (list.length) writeJson(KEYS.deletedProfileIds, list);
+  else localStorage.removeItem(KEYS.deletedProfileIds);
+}
+
+export function addDeletedProfileId(id) {
+  const next = [...new Set([...loadDeletedProfileIds(), id].filter(Boolean))];
+  saveDeletedProfileIds(next);
+  return next;
+}
+
+/** Снять tombstone после успешного сохранения в облако. */
+export function pruneDeletedProfileIds(deletedIds, keptProfileIds) {
+  const keep = new Set((keptProfileIds || []).filter(Boolean));
+  const next = (deletedIds || []).filter((id) => !keep.has(id));
+  saveDeletedProfileIds(next);
+  return next;
+}
+
+export function normalizeProfiles(profiles) {
+  let changed = false;
+  const normalized = (profiles || [])
+    .map((profile, index) => {
+      if (!profile || typeof profile !== 'object') return null;
+      const next = { ...profile };
+      if (!next.id) {
+        next.id = createProfileId();
+        changed = true;
+      }
+      if (!String(next.name || '').trim()) {
+        next.name = `Кабинет ${index + 1}`;
+        changed = true;
+      }
+      return next;
+    })
+    .filter(Boolean);
+  return { profiles: normalized, changed };
 }
 
 export function loadPurchases() {
