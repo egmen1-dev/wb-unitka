@@ -3,9 +3,12 @@ import { fmtMoney } from '../lib/format';
 import { DEFAULT_FETCH_TIMEOUT_MS, fetchWithTimeout, readJsonResponse } from '../lib/http';
 import {
   clearFeedbacksRateLimit,
+  formatCacheBadge,
+  getCachedFeedbacksList,
   getCachedUnansweredCount,
   getFeedbacksRateLimitSecondsLeft,
   isFeedbacksRateLimited,
+  setCachedFeedbacksList,
   setCachedUnansweredCount,
   setFeedbacksRateLimited,
 } from '../lib/feedbacks-cache';
@@ -173,12 +176,16 @@ export default function FeedbacksPanel({ token }) {
   const [aiConfig, setAiConfig] = useState({
     yandexConfigured: false,
     openaiConfigured: false,
+    envPresent: null,
     loading: true,
+    error: '',
   });
+  const [cacheBadge, setCacheBadge] = useState('');
   const refreshLockRef = useRef(false);
   const refreshDebounceRef = useRef(null);
   const loadAttemptRef = useRef(0);
   const hasDataRef = useRef(false);
+  const dataRef = useRef(null);
   const loadInFlightRef = useRef(false);
   const autoRetryTimerRef = useRef(null);
   const abortRef = useRef(null);
@@ -303,17 +310,25 @@ export default function FeedbacksPanel({ token }) {
         loadAttemptRef.current = 0;
         setRateLimitCountdown(0);
         hasDataRef.current = true;
-        setData((prev) => {
-          if (!append || !prev) return payload;
-          const seen = new Set((prev.feedbacks || []).map((fb) => fb.id));
-          const merged = [...(prev.feedbacks || [])];
+        let mergedPayload = payload;
+        if (append && dataRef.current) {
+          const seen = new Set((dataRef.current.feedbacks || []).map((fb) => fb.id));
+          const merged = [...(dataRef.current.feedbacks || [])];
           for (const fb of payload.feedbacks || []) {
             if (!seen.has(fb.id)) merged.push(fb);
           }
-          return { ...payload, feedbacks: merged };
+          mergedPayload = { ...payload, feedbacks: merged };
+        }
+        dataRef.current = mergedPayload;
+        setData(mergedPayload);
+        const count = mergedPayload.countUnanswered ?? mergedPayload.feedbacks?.length ?? 0;
+        setCachedFeedbacksList(token, {
+          feedbacks: mergedPayload.feedbacks || [],
+          countUnanswered: count,
+          hasMore: mergedPayload.hasMore ?? count > (mergedPayload.feedbacks?.length || 0),
         });
-        const count = payload.countUnanswered ?? payload.feedbacks?.length ?? 0;
         setCachedUnansweredCount(count);
+        setCacheBadge('');
         setStatus(`Без ответа: ${count}`);
       } catch (err) {
         if (err?.message === 'Запрос отменён') return;
@@ -356,17 +371,31 @@ export default function FeedbacksPanel({ token }) {
         const { data: payload } = await readJsonResponse(response);
         if (cancelled) return;
         if (!response.ok) {
-          setAiConfig({ yandexConfigured: false, openaiConfigured: false, loading: false });
+          setAiConfig({
+            yandexConfigured: false,
+            openaiConfigured: false,
+            envPresent: null,
+            loading: false,
+            error: 'Сервер вернул ошибку при проверке AI',
+          });
           return;
         }
         setAiConfig({
           yandexConfigured: Boolean(payload?.yandexConfigured),
           openaiConfigured: Boolean(payload?.openaiConfigured),
+          envPresent: payload?.envPresent || null,
           loading: false,
+          error: '',
         });
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          setAiConfig({ yandexConfigured: false, openaiConfigured: false, loading: false });
+          setAiConfig({
+            yandexConfigured: false,
+            openaiConfigured: false,
+            envPresent: null,
+            loading: false,
+            error: err?.message || 'Не удалось проверить AI на сервере',
+          });
         }
       }
     })();
@@ -377,9 +406,35 @@ export default function FeedbacksPanel({ token }) {
   }, []);
 
   useEffect(() => {
-    if (!token) return undefined;
+    if (!token) {
+      setData(null);
+      dataRef.current = null;
+      setCacheBadge('');
+      return undefined;
+    }
+
+    const cached = getCachedFeedbacksList(token);
+    if (cached) {
+      hasDataRef.current = true;
+      const cachedData = {
+        feedbacks: cached.feedbacks || [],
+        countUnanswered: cached.countUnanswered ?? cached.feedbacks?.length ?? 0,
+        hasMore: cached.hasMore ?? false,
+      };
+      dataRef.current = cachedData;
+      setData(cachedData);
+      const badge = formatCacheBadge(cached);
+      setCacheBadge(badge);
+      const count = cached.countUnanswered ?? cached.feedbacks?.length ?? 0;
+      setStatus(badge ? `Без ответа: ${count} · ${badge}` : `Без ответа: ${count}`);
+      setError('');
+      setLoading(false);
+      return undefined;
+    }
+
     const cachedCount = getCachedUnansweredCount();
     if (cachedCount != null) setStatus(`Без ответа: ${cachedCount}`);
+    setCacheBadge('');
     loadAttemptRef.current = 0;
     loadFeedbacks();
     return () => {
@@ -540,11 +595,16 @@ export default function FeedbacksPanel({ token }) {
       <section className="panel">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <h2 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-800">
               Неотвеченные отзывы
               {countUnanswered > 0 ? (
                 <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
                   {countUnanswered}
+                </span>
+              ) : null}
+              {cacheBadge ? (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                  {cacheBadge}
                 </span>
               ) : null}
             </h2>
@@ -594,6 +654,24 @@ export default function FeedbacksPanel({ token }) {
               <p>
                 Опционально: <code className="rounded bg-white px-1">OPENAI_API_KEY</code> в Vercel.
               </p>
+            ) : null}
+            {aiConfig.error ? (
+              <p className="text-rose-600">
+                <span className="font-medium text-rose-700">Ошибка проверки: </span>
+                {aiConfig.error}
+              </p>
+            ) : null}
+            {aiConfig.envPresent ? (
+              <div className="rounded border border-slate-200 bg-white px-2 py-1.5 font-mono text-[10px] text-slate-500">
+                <p className="mb-1 font-sans text-[10px] font-medium text-slate-600">
+                  Переменные на сервере (только да/нет):
+                </p>
+                {Object.entries(aiConfig.envPresent).map(([key, present]) => (
+                  <p key={key}>
+                    {key}: {present ? 'да' : 'нет'}
+                  </p>
+                ))}
+              </div>
             ) : null}
           </div>
         </details>

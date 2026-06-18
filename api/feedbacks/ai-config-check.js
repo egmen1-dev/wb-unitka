@@ -1,9 +1,20 @@
 import { readYandexConfig } from '../../lib/yandex-gpt.js';
 
+function envPresent(name) {
+  return Boolean(process.env[name]?.trim());
+}
+
 export function getAiConfigStatus() {
   return {
     yandexConfigured: Boolean(readYandexConfig()),
-    openaiConfigured: Boolean(process.env.OPENAI_API_KEY?.trim()),
+    openaiConfigured: envPresent('OPENAI_API_KEY'),
+    envPresent: {
+      YANDEX_GPT_API_KEY: envPresent('YANDEX_GPT_API_KEY'),
+      YANDEX_CLOUD_API_KEY: envPresent('YANDEX_CLOUD_API_KEY'),
+      YANDEX_FOLDER_ID: envPresent('YANDEX_FOLDER_ID'),
+      YANDEX_GPT_MODEL: envPresent('YANDEX_GPT_MODEL'),
+      OPENAI_API_KEY: envPresent('OPENAI_API_KEY'),
+    },
   };
 }
 
