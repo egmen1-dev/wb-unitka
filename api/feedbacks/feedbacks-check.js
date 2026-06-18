@@ -1,5 +1,6 @@
 import { probeWbFeedbacksTokenScopes, WB_FEEDBACKS_TOKEN_SCOPES } from '../../lib/wb-token-scopes.js';
 import { WbFeedbacksRateLimitError } from '../../lib/wb-feedbacks.js';
+import { getAiConfigStatus } from './ai-config-check.js';
 
 function readToken(req) {
   const header = req.headers?.authorization || req.headers?.Authorization || '';
@@ -11,13 +12,20 @@ function readToken(req) {
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     return res.status(204).end();
   }
 
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      action: 'ai-config',
+      ...getAiConfigStatus(),
+    });
+  }
+
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Используйте POST' });
+    return res.status(405).json({ error: 'Используйте GET или POST' });
   }
 
   const token = readToken(req);
