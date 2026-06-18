@@ -18,8 +18,9 @@ export function useVirtualRows(containerRef, rowCount, resetKey = '') {
     if (!el) return undefined;
 
     const update = () => {
-      const start = Math.max(0, Math.floor(el.scrollTop / ROW_HEIGHT) - OVERSCAN);
       const visible = Math.ceil(el.clientHeight / ROW_HEIGHT) + OVERSCAN * 2;
+      const rawStart = Math.max(0, Math.floor(el.scrollTop / ROW_HEIGHT) - OVERSCAN);
+      const start = rowCount > 0 ? Math.min(rawStart, Math.max(0, rowCount - 1)) : 0;
       const end = Math.min(rowCount, start + visible);
       setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
     };
@@ -36,13 +37,16 @@ export function useVirtualRows(containerRef, rowCount, resetKey = '') {
   }, [containerRef, rowCount, resetKey]);
 
   const virtualized = rowCount >= VIRTUALIZE_MIN;
-  const paddingTop = virtualized ? range.start * ROW_HEIGHT : 0;
-  const paddingBottom = virtualized ? Math.max(0, (rowCount - range.end) * ROW_HEIGHT) : 0;
+  const safeStart =
+    rowCount === 0 ? 0 : Math.min(range.start, Math.max(0, rowCount - 1));
+  const safeEnd = Math.max(safeStart, Math.min(range.end, rowCount));
+  const paddingTop = virtualized ? safeStart * ROW_HEIGHT : 0;
+  const paddingBottom = virtualized ? Math.max(0, (rowCount - safeEnd) * ROW_HEIGHT) : 0;
 
   return {
     virtualized,
-    start: range.start,
-    end: range.end,
+    start: safeStart,
+    end: safeEnd,
     paddingTop,
     paddingBottom,
   };

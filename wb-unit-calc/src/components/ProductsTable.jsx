@@ -299,11 +299,8 @@ function ProductsTable({
 
   const filtered = useMemo(() => {
     const q = query.trim();
-    const searchActive = Boolean(q);
     let list = rows.filter((row) => {
-      if (searchActive) {
-        return rowMatchesProductSearch(row, q);
-      }
+      if (q && !rowMatchesProductSearch(row, q)) return false;
       if (onlyWithPurchase && !row.purchasePrice) return false;
       if (onlyProfitable && !(primaryProfit(row, scheme) > 0)) return false;
       if (!rowMatchesBrandFilter(row, brandFilter)) return false;
@@ -343,11 +340,18 @@ function ProductsTable({
     return () => el.removeEventListener('scroll', saveScroll);
   }, []);
 
-  const tableBodyKey = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return 'all';
-    return `q:${q}:${filtered.length}`;
-  }, [query, filtered.length]);
+  const tableBodyKey = useMemo(
+    () =>
+      [
+        query.trim().toLowerCase(),
+        brandFilter.join('\u0001'),
+        marginFilter || '',
+        onlyWithPurchase ? '1' : '0',
+        onlyProfitable ? '1' : '0',
+        filtered.length,
+      ].join('|'),
+    [query, brandFilter, marginFilter, onlyWithPurchase, onlyProfitable, filtered.length]
+  );
 
   const { start: vStart, end: vEnd, paddingTop, paddingBottom } = useVirtualRows(
     tableRef,
@@ -368,10 +372,16 @@ function ProductsTable({
       scrollPosRef.current = 0;
       return;
     }
+    const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (el.scrollTop > maxScroll) {
+      el.scrollTop = maxScroll;
+      scrollPosRef.current = maxScroll;
+      return;
+    }
     if (scrollPosRef.current > 0) {
       el.scrollTop = scrollPosRef.current;
     }
-  }, [tableBodyKey, rows, query]);
+  }, [tableBodyKey, rows, query, filtered.length]);
 
   useEffect(() => {
     if (!dashboardQuery) return undefined;
@@ -609,6 +619,7 @@ function ProductsTable({
 
                   const raw = row[col.key];
                   let className = 'text-slate-700';
+                  let title = col.hint;
                   if (
                     col.key === 'marginFbo' ||
                     col.key === 'marginFbs' ||
@@ -616,7 +627,7 @@ function ProductsTable({
                     col.key === 'draftMarginFbs'
                   ) {
                     className = marginClass(raw);
-                  } else                   if (
+                  } else if (
                     col.key === 'profitFbo' ||
                     col.key === 'profitFbs' ||
                     col.key === 'draftProfitFbo' ||
@@ -627,8 +638,6 @@ function ProductsTable({
                       title = 'Укажите закупку — без неё прибыль не считается';
                     }
                   }
-
-                  let title = col.hint;
                   if (col.key === 'title') title = row.title;
                   if (col.key === 'storageRub') title = storageTitle(row);
                   if (col.key === 'logisticsFbs') title = logisticsTitle(row, 'fbs');
