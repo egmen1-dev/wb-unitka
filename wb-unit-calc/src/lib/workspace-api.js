@@ -12,6 +12,30 @@ export function getTeamFromUrl() {
   return params.get('team')?.trim().toUpperCase() || '';
 }
 
+export function isTeamInUrl(teamCode) {
+  const normalized = String(teamCode || '').trim().toUpperCase();
+  if (!normalized) return false;
+  return getTeamFromUrl() === normalized;
+}
+
+/** Добавляет ?team= в адресную строку, если код есть в сессии, но пропал из URL. */
+export function ensureTeamInUrl(teamCode) {
+  const normalized = String(teamCode || '').trim().toUpperCase();
+  if (!normalized || isTeamInUrl(normalized)) return false;
+  const url = new URL(window.location.href);
+  url.searchParams.set('team', normalized);
+  window.history.replaceState({}, '', url);
+  return true;
+}
+
+export function removeTeamFromUrl() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('team')) return false;
+  url.searchParams.delete('team');
+  window.history.replaceState({}, '', url);
+  return true;
+}
+
 export function loadStoredTeam() {
   return localStorage.getItem(TEAM_KEY) || '';
 }

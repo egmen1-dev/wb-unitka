@@ -51,10 +51,12 @@ export function saveStoredSection(section) {
 }
 
 /** Синхронизирует ?tab= с текущим разделом (calc — без параметра). */
-export function writeSectionToUrl(section, { replace = true } = {}) {
+export function writeSectionToUrl(section, { replace = true, teamCode = '' } = {}) {
   const url = new URL(window.location.href);
   if (section && section !== 'calc') url.searchParams.set('tab', section);
   else url.searchParams.delete('tab');
+  const normalizedTeam = String(teamCode || '').trim().toUpperCase();
+  if (normalizedTeam) url.searchParams.set('team', normalizedTeam);
   const fn = replace ? 'replaceState' : 'pushState';
   window.history[fn]({}, '', url);
 }

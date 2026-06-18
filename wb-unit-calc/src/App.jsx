@@ -484,9 +484,10 @@ export default function App() {
       setTeamUrlMissing(false);
       return;
     }
-    const missing = !isTeamInUrl(team);
-    setTeamUrlMissing(missing);
-    if (missing) ensureTeamInUrl(team);
+    if (!isTeamInUrl(team)) {
+      ensureTeamInUrl(team);
+    }
+    setTeamUrlMissing(!isTeamInUrl(team));
   }, [team]);
 
   useEffect(() => {
@@ -559,6 +560,8 @@ export default function App() {
     if (!unchanged) {
       const hadLocalRows = baseRowsRef.current.length > 0;
       const cloudEmpty = !data.payload?.cache?.rows?.length;
+      const preferLocalTokens =
+        Boolean(teamCode && !isTeamInUrl(teamCode)) || bootTeamUrlMissing.current;
       applyWorkspacePayload(
         data.payload,
         {
@@ -576,8 +579,14 @@ export default function App() {
           setMeta,
           setWbProductCache,
         },
-        { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current, deletedProfileIds: deletedProfileIdsRef.current }
+        {
+          keepRows: baseRowsRef.current,
+          keepProfiles: profilesRef.current,
+          deletedProfileIds: deletedProfileIdsRef.current,
+          preferLocalTokens,
+        }
       );
+      if (preferLocalTokens) bootTeamUrlMissing.current = false;
       if (hadLocalRows && cloudEmpty) {
         setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
       }
@@ -606,9 +615,8 @@ export default function App() {
     if (ownerId && ownerId === getClientId()) {
       markTeamOwner(data.teamCode, ownerId);
     }
-    const url = new URL(window.location.href);
-    url.searchParams.set('team', data.teamCode);
-    window.history.replaceState({}, '', url);
+    ensureTeamInUrl(data.teamCode);
+    setTeamUrlMissing(false);
     skipCloudSave.current = false;
     setCloudStatus(`Команда «${data.name || data.teamCode}»`);
   }, [refreshTeamWorkspace, workspaceUpdatedAt]);
@@ -623,6 +631,8 @@ export default function App() {
         if (!data.updatedAt || data.updatedAt === workspaceUpdatedAt) return;
         const hadLocalRows = baseRowsRef.current.length > 0;
         const cloudEmpty = !data.payload?.cache?.rows?.length;
+        const preferLocalTokens =
+          Boolean(team && !isTeamInUrl(team)) || bootTeamUrlMissing.current;
         applyWorkspacePayload(
           data.payload,
           {
@@ -640,8 +650,14 @@ export default function App() {
             setMeta,
             setWbProductCache,
           },
-          { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current, deletedProfileIds: deletedProfileIdsRef.current }
+          {
+            keepRows: baseRowsRef.current,
+            keepProfiles: profilesRef.current,
+            deletedProfileIds: deletedProfileIdsRef.current,
+            preferLocalTokens,
+          }
         );
+        if (preferLocalTokens) bootTeamUrlMissing.current = false;
         if (hadLocalRows && cloudEmpty) {
           setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
         }
@@ -1272,11 +1288,20 @@ export default function App() {
     setOwnerClientId(null);
     setTeamAccess(normalizeTeamAccess(null));
     setWorkspaceUpdatedAt('');
+    setTeamUrlMissing(false);
     saveStoredTeam('');
     clearWorkspaceCache(previousTeam);
-    const url = new URL(window.location.href);
-    url.searchParams.delete('team');
-    window.history.replaceState({}, '', url);
+    removeTeamFromUrl();
+  }
+
+  function handleRestoreTeamUrl() {
+    if (!team) return;
+    ensureTeamInUrl(team);
+    writeSectionToUrl(section, { teamCode: team });
+    setTeamUrlMissing(!isTeamInUrl(team));
+    if (isTeamInUrl(team)) {
+      setCloudStatus(`Ссылка восстановлена · код ${team}`);
+    }
   }
 
   async function handleCreateTeam({ name, fresh = false }) {
@@ -1327,9 +1352,8 @@ export default function App() {
     setTeamName(created.name || name || 'КОМАНДА');
     saveStoredTeam(created.teamCode);
     markTeamOwner(created.teamCode, newOwnerId);
-    const url = new URL(window.location.href);
-    url.searchParams.set('team', created.teamCode);
-    window.history.replaceState({}, '', url);
+    ensureTeamInUrl(created.teamCode);
+    setTeamUrlMissing(false);
     skipCloudSave.current = false;
     setCloudStatus(`Новая команда «${created.name || name}» · код ${created.teamCode}`);
 
@@ -1446,6 +1470,16 @@ export default function App() {
     if (row.vendorCode) setDashboardQuery(String(row.vendorCode));
   }
 
+  async function copyTeamLink() {
+    if (!team) return;
+    try {
+      await navigator.clipboard.writeText(buildShareUrl(team));
+      setCloudStatus('Ссылка команды скопирована');
+    } catch {
+      setCloudStatus('Не удалось скопировать ссылку');
+    }
+  }
+
   return (
     <AppShell
       section={section}
@@ -1481,11 +1515,20 @@ export default function App() {
       }
       syncBar={
         syncedAt ? (
-          <span className="text-slate-600">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-600">
+            {team ? (
+              <>
+                <span className="font-mono text-xs font-semibold tracking-wide text-brand-700">{team}</span>
+                <button type="button" className="text-xs font-medium text-brand-700 underline" onClick={copyTeamLink}>
+                  Ссылка
+                </button>
+                <span aria-hidden>·</span>
+              </>
+            ) : null}
             {teamName ? (
               <>
                 <span className="font-medium text-slate-800">{teamName}</span>
-                {' · '}
+                <span aria-hidden>·</span>
               </>
             ) : null}
             {meta.syncMode === 'full' ? 'Полная' : meta.syncMode === 'bootstrap' ? 'Первая' : 'Быстрая'} синхронизация:{' '}
@@ -1501,12 +1544,21 @@ export default function App() {
             ) : null}
           </span>
         ) : (
-          <span className="text-slate-600">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-600">
+            {team ? (
+              <>
+                <span className="font-mono text-xs font-semibold tracking-wide text-brand-700">{team}</span>
+                <button type="button" className="text-xs font-medium text-brand-700 underline" onClick={copyTeamLink}>
+                  Ссылка
+                </button>
+                <span aria-hidden>·</span>
+              </>
+            ) : null}
             {teamName ? (
               <>
                 Команда <span className="font-medium text-slate-800">{teamName}</span>
                 {activeProfile ? ` · кабинет ${activeProfile.name}` : ''}
-                {' · '}
+                <span aria-hidden>·</span>
               </>
             ) : null}
             {cloudSyncing ? 'Обновляем облако… · ' : cloudRefreshing ? 'Сверяем облако… · ' : ''}
@@ -1516,6 +1568,7 @@ export default function App() {
       }
     >
       <UpdateBanner />
+      {teamUrlMissing ? <TeamUrlBanner teamCode={team} onRestore={handleRestoreTeamUrl} /> : null}
       {error ? (
         <WbTokenBanner message={error} onOpenData={() => changeSection('data')} />
       ) : null}
@@ -1710,6 +1763,21 @@ export default function App() {
       {section === 'data' ? (
         canAccessSection('data', myPermissions) || !team ? (
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          {team ? (
+            <section className="panel border-brand-200 bg-brand-50/40">
+              <h2 className="text-sm font-semibold text-slate-800">Команда</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {teamName ? `${teamName} · ` : ''}
+                код для входа коллег
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xl font-bold tracking-widest text-brand-700">{team}</span>
+                <button type="button" className="btn-secondary text-xs" onClick={copyTeamLink}>
+                  Ссылка для команды
+                </button>
+              </div>
+            </section>
+          ) : null}
           <section className="panel">
             <h2 className="text-sm font-semibold text-slate-800">Синхронизация с WB</h2>
             <p className="mt-1 text-xs text-slate-500">
