@@ -1,9 +1,12 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import FeedbacksPanel from './components/FeedbacksPanel';
 import TokenPanel from './components/TokenPanel';
+import VersionBanner from './components/VersionBanner';
 import { APP_BUILD } from './lib/app-build';
 import { clearStaleFeedbacksCacheOnBoot } from './lib/feedbacks-cache';
 import { loadToken, saveToken } from './lib/storage';
+import { clearTokenFromHash, readTokenFromHash } from './lib/token-share';
+import { fetchServerVersion } from './lib/version-check';
 
 function BootStatus({ error }) {
   if (error) {
@@ -18,12 +21,25 @@ function BootStatus({ error }) {
 }
 
 export default function App() {
-  const [token, setToken] = useState(() => loadToken());
+  const [token, setToken] = useState(() => readTokenFromHash() || loadToken());
   const [bootError, setBootError] = useState(null);
   const [bootReady, setBootReady] = useState(false);
+  const [versionInfo, setVersionInfo] = useState(null);
 
   useLayoutEffect(() => {
+    const fromHash = readTokenFromHash();
+    if (fromHash) clearTokenFromHash();
     setBootReady(true);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchServerVersion().then((info) => {
+      if (!cancelled && info?.stale) setVersionInfo(info);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -61,6 +77,9 @@ export default function App() {
 
       <main className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-5" data-boot-ready={bootReady ? '1' : '0'}>
         <BootStatus error={bootError} />
+        {versionInfo?.stale ? (
+          <VersionBanner serverSha={versionInfo.serverSha} alreadyTried={versionInfo.alreadyTried} />
+        ) : null}
         <TokenPanel token={token} onTokenChange={setToken} />
         <FeedbacksPanel token={token} />
         <footer className="space-y-1 text-center text-xs text-slate-400">

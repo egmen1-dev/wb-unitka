@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { buildTokenShareUrl } from '../lib/token-share';
 import WbTokenScopesHint from './WbTokenScopesHint';
 
 function maskToken(token) {
@@ -9,6 +10,7 @@ function maskToken(token) {
 export default function TokenPanel({ token, onTokenChange }) {
   const [draft, setDraft] = useState(token);
   const [editing, setEditing] = useState(!token);
+  const [shareStatus, setShareStatus] = useState('');
 
   function save(event) {
     event.preventDefault();
@@ -21,14 +23,27 @@ export default function TokenPanel({ token, onTokenChange }) {
     onTokenChange('');
     setDraft('');
     setEditing(true);
+    setShareStatus('');
+  }
+
+  async function copyShareLink() {
+    if (!token) return;
+    const link = buildTokenShareUrl(token);
+    try {
+      await navigator.clipboard.writeText(link);
+      setShareStatus('Ссылка скопирована — отправьте коллеге в личку');
+    } catch {
+      setShareStatus('Не удалось скопировать — выделите ссылку вручную');
+      window.prompt('Ссылка с токеном для коллеги:', link);
+    }
   }
 
   return (
     <section className="panel">
       <h2 className="text-sm font-semibold text-slate-800">Токен WB для отзывов</h2>
       <p className="mt-1 text-xs text-slate-500">
-        Категория «Вопросы и отзывы». Хранится только в браузере (localStorage), не отправляется на наш
-        сервер кроме прокси-запросов к WB.
+        Категория «Вопросы и отзывы». По умолчанию хранится только в этом браузере. Для коллеги — скопируйте
+        ссылку с токеном (в фрагменте URL, не уходит в логи сервера).
       </p>
 
       {token && !editing ? (
@@ -41,6 +56,9 @@ export default function TokenPanel({ token, onTokenChange }) {
           </button>
           <button type="button" className="text-xs text-rose-600 hover:underline" onClick={clearToken}>
             Удалить
+          </button>
+          <button type="button" className="btn-secondary text-xs" onClick={copyShareLink}>
+            Скопировать ссылку для коллеги
           </button>
         </div>
       ) : (
@@ -59,6 +77,8 @@ export default function TokenPanel({ token, onTokenChange }) {
           </button>
         </form>
       )}
+
+      {shareStatus ? <p className="mt-2 text-xs text-emerald-700">{shareStatus}</p> : null}
 
       {token ? (
         <WbTokenScopesHint
