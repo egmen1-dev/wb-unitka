@@ -7,6 +7,7 @@ import { getProductOverride } from '../lib/product-overrides';
 import { rowMatchesBrandFilter, normalizeBrandFilter } from '../lib/brand-filter';
 import { rowMatchesProductSearch } from '../lib/product-search';
 import { MARGIN_BUCKETS, rowMatchesMarginFilter } from '../lib/margin-insights';
+import { isSalePriceLikelyStale } from '@lib/wb-sync-cache.js';
 import BrandFilter from './BrandFilter';
 
 const MONEY_KEYS = new Set([
@@ -666,6 +667,12 @@ function ProductsTable({
                   }
                   if (col.key === 'advertisingDrr' && row.advertisingDrr > 0) {
                     title = `Расход ${fmtMoney(row.adSpend)} за 30 д · ${fmtPct(row.advertisingDrr)} от продаж`;
+                  }
+                  if (col.key === 'salePrice' && isSalePriceLikelyStale(row)) {
+                    className = 'text-amber-700 font-medium';
+                    title =
+                      `Продажа ${fmtMoney(row.salePrice)} сильно расходится с черновиком ${fmtMoney(row.draftSalePrice)} — ` +
+                      'нажмите «Обновить цены» в разделе Данные';
                   }
 
                   return (

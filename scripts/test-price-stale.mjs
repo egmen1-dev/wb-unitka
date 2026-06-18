@@ -5,7 +5,11 @@
 import {
   REALIZATION_MAX_AGE_MS,
   applyPriceUpdatesToRows,
+  isPriceDataStale,
+  isPriceSyncedAtNewer,
   isRealizationStale,
+  isSalePriceLikelyStale,
+  mergeWorkspaceRowsPreservingLocalPrices,
   resolveRealizationSyncedAt,
   shouldSkipRealizationFetch,
 } from '../lib/wb-sync-cache.js';
@@ -59,6 +63,44 @@ check(
   'patch resets retailPricePerUnit to new sale',
   patched[0].retailPricePerUnit === 7000
 );
+
+const localFresh = new Date().toISOString();
+const cloudOld = new Date(Date.now() - 3600_000).toISOString();
+check('local pricesSyncedAt newer than cloud', isPriceSyncedAtNewer(localFresh, cloudOld));
+check('cloud pricesSyncedAt not newer when equal', !isPriceSyncedAtNewer(cloudOld, cloudOld));
+
+const cloudRows = [
+  { nmId: 8030700646, vendorCode: '8030700646', salePrice: 32450, basePrice: 35000, ourPrice: 32450 },
+];
+const localRows = [
+  { nmId: 8030700646, vendorCode: '8030700646', salePrice: 7000, basePrice: 7000, ourPrice: 7000, retailPricePerUnit: 7000 },
+];
+const merged = mergeWorkspaceRowsPreservingLocalPrices(
+  cloudRows,
+  localRows,
+  localFresh,
+  cloudOld
+);
+check(
+  'cloud pull keeps fresher local sale price',
+  merged[0].salePrice === 7000 && merged[0].retailPricePerUnit === 7000
+);
+check(
+  'cloud pull uses cloud when local prices older',
+  mergeWorkspaceRowsPreservingLocalPrices(cloudRows, localRows, cloudOld, localFresh)[0].salePrice === 32450
+);
+
+check(
+  'stale sale warning when draft differs from sale',
+  isSalePriceLikelyStale({ salePrice: 32450, draftSalePrice: 7000 })
+);
+check(
+  'no stale warning when prices close',
+  !isSalePriceLikelyStale({ salePrice: 7000, draftSalePrice: 7100 })
+);
+
+check('missing pricesSyncedAt is stale', isPriceDataStale(null));
+check('fresh pricesSyncedAt is not stale', !isPriceDataStale(localFresh));
 
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
