@@ -122,6 +122,25 @@ function ScenarioBadge({ scenario }) {
   );
 }
 
+function UsageContextBadge({ usageContext }) {
+  if (!usageContext?.labels?.length) return null;
+  const title = [
+    usageContext.summary || usageContext.labels.join(', '),
+    usageContext.vocabularyHint,
+    usageContext.portable ? 'Компактный/переносной товар' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <span
+      className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-900"
+      title={title}
+    >
+      {usageContext.labels.join(' · ')}
+    </span>
+  );
+}
+
 function PreviewModal({ feedback, draft, onClose, onSend, sending }) {
   if (!feedback || !draft) return null;
 
@@ -732,6 +751,7 @@ export default function FeedbacksPanel({ token }) {
             qualityRetried: payload.qualityRetried || false,
             hint: payload.hint,
             scenario: payload.scenario || null,
+            usageContext: payload.usageContext || null,
           },
         }));
         if (payload.provider === 'yandex' || payload.provider === 'openai') {
@@ -1034,6 +1054,7 @@ export default function FeedbacksPanel({ token }) {
                 <div className="mt-4 border-t border-slate-100 pt-4">
                   <div className="flex flex-wrap items-center gap-2">
                     {draft?.scenario ? <ScenarioBadge scenario={draft.scenario} /> : null}
+                    {draft?.usageContext ? <UsageContextBadge usageContext={draft.usageContext} /> : null}
                     {draft?.quality ? <QualityBadge quality={draft.quality} /> : null}
                     {draft?.promptVersion ? (
                       <PromptBadge promptVersion={draft.promptVersion} commitSha={draft.commitSha} />

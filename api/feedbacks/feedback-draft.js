@@ -3,6 +3,7 @@ import {
   buildTemplateDraft,
   catalogRowToProductContext,
   detectBuyerScenario,
+  detectProductUsageContext,
   listAlternativeCandidates,
   pickAlternativeProduct,
   pickPremiumUpsell,
@@ -264,6 +265,7 @@ export default async function handler(req, res) {
   const alternative = pickAlternativeProduct(catalogRows, feedback, feedback.nmId);
   const premiumUpsell = rating >= 4 ? pickPremiumUpsell(catalogRows, feedback.nmId) : null;
   const scenario = detectBuyerScenario(feedback);
+  const usageContext = detectProductUsageContext({ feedback, product });
   const candidates = listAlternativeCandidates(catalogRows, feedback, feedback.nmId, 6);
 
   const systemPrompt = buildManagerSystemPrompt({
@@ -276,6 +278,7 @@ export default async function handler(req, res) {
     regenerate,
     buyerName: feedback?.userName || null,
     buyerGender: feedback?.buyerGender || null,
+    usageContext,
   });
   const userPrompt = buildReviewUserMessage({ feedback });
 
@@ -384,6 +387,7 @@ export default async function handler(req, res) {
       keywords: scenario.keywords,
       mirrorPhrases: scenario.mirrorPhrases,
     },
+    usageContext,
     parsedReview: {
       bables: scenario.parsed.bables,
       matchingSize: scenario.parsed.matchingSize,
