@@ -300,6 +300,61 @@ function formatApiCheckDiagnostic({ apiCheckStatus, endpoint, error }) {
   return 'API ai-config-check: 404 / недоступен';
 }
 
+const CRON_ACTION_LABELS = {
+  sent: 'отправлен',
+  idle: 'нет отзывов',
+  skipped: 'пропуск',
+  'auth-failed': '401 auth',
+  'draft-failed': 'ошибка черновика',
+  'rate-limit': 'лимит WB',
+  error: 'ошибка',
+};
+
+function formatCronAction(action) {
+  return CRON_ACTION_LABELS[action] || action || '—';
+}
+
+async function fetchCronStatus() {
+  try {
+    const response = await fetchWithTimeout('/api/feedbacks/cron-status', { method: 'GET' });
+    const { data: payload } = await readJsonResponse(response);
+    if (!response.ok || !payload?.ok) {
+      return {
+        loading: false,
+        runs: [],
+        lastRun: null,
+        recentlyActive: false,
+        stale: true,
+        status: 'unknown',
+        message: payload?.error || 'Не удалось загрузить статус cron',
+        schedule: '*/6 * * * *',
+      };
+    }
+    return {
+      loading: false,
+      runs: payload.runs || [],
+      lastRun: payload.lastRun || null,
+      recentlyActive: Boolean(payload.recentlyActive),
+      stale: Boolean(payload.stale),
+      status: payload.status || 'unknown',
+      message: payload.message || '',
+      schedule: payload.schedule || '*/6 * * * *',
+      hobbyLimitHint: Boolean(payload.hobbyLimitHint),
+    };
+  } catch (err) {
+    return {
+      loading: false,
+      runs: [],
+      lastRun: null,
+      recentlyActive: false,
+      stale: true,
+      status: 'error',
+      message: err?.message || 'Ошибка загрузки cron-status',
+      schedule: '*/6 * * * *',
+    };
+  }
+}
+
 async function fetchAiConfigStatus() {
   const endpoints = [
     { path: '/api/feedbacks/feedbacks-check', label: 'feedbacks-check' },
@@ -317,6 +372,10 @@ async function fetchAiConfigStatus() {
         return {
           yandexConfigured: Boolean(payload?.yandexConfigured),
           openaiConfigured: Boolean(payload?.openaiConfigured),
+          serverCronEnabled: Boolean(payload?.serverCronEnabled),
+          serverCronReady: Boolean(payload?.serverCronReady),
+          cronSecretConfigured: Boolean(payload?.cronSecretConfigured),
+          serverCronHint: payload?.serverCronHint || '',
           envPresent: payload?.envPresent || null,
           promptVersion: payload?.promptVersion || null,
           commitSha: payload?.commitSha || null,
@@ -501,6 +560,8 @@ export default function FeedbacksPanel({ token }) {
   const [aiConfig, setAiConfig] = useState({
     yandexConfigured: false,
     openaiConfigured: false,
+    serverCronEnabled: false,
+    serverCronHint: '',
     envPresent: null,
     promptVersion: null,
     commitSha: null,
@@ -512,6 +573,21 @@ export default function FeedbacksPanel({ token }) {
   });
   const [cacheBadge, setCacheBadge] = useState('');
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(() => loadAutoReplyEnabled());
+  const [cronStatus, setCronStatus] = useState({
+    loading: true,
+    runs: [],
+    lastRun: null,
+    recentlyActive: false,
+    stale: true,
+    status: 'unknown',
+    message: '',
+    schedule: '*/6 * * * *',
+    hobbyLimitHint: false,
+  });
+  const serverCronEnvReady =
+    aiConfig.serverCronEnabled && aiConfig.serverCronReady && !aiConfig.loading;
+  const serverCronBlocksClient =
+    serverCronEnvReady && cronStatus.recentlyActive && !cronStatus.loading;
   const [autoReplyState, setAutoReplyState] = useState({
     sentThisHour: getSentThisHour(),
     nextInMs: getMsUntilNextSlot(),
@@ -744,6 +820,11 @@ export default function FeedbacksPanel({ token }) {
       );
   }, []);
 
+  const refreshCronStatus = useCallback(() => {
+    setCronStatus((prev) => ({ ...prev, loading: prev.runs.length === 0 }));
+    fetchCronStatus().then((result) => setCronStatus(result));
+  }, []);
+
   const handleRefresh = useCallback(() => {
     if (loadInFlightRef.current) {
       cancelForegroundLoad();
@@ -821,7 +902,13 @@ export default function FeedbacksPanel({ token }) {
   }, [token, requestAiConfigCheck]);
 
   useEffect(() => {
-    if (rateLimitCountdown <= 0) {
+    if (!token) return undefined;
+    refreshCronStatus();
+    const timer = setInterval(refreshCronStatus, 60_000);
+    return () => clearInterval(timer);
+  }, [token, refreshCronStatus]);
+
+  useEffect(() => {
       if (pendingRefreshRef.current) {
         pendingRefreshRef.current = false;
         loadFeedbacks({ force: true });
@@ -1002,7 +1089,7 @@ export default function FeedbacksPanel({ token }) {
     autoReplyRef.current?.destroy();
     autoReplyRef.current = null;
 
-    if (!token || !autoReplyEnabled) {
+    if (!token || !autoReplyEnabled || serverCronBlocksClient) {
       setAutoReplyState((prev) => ({
         ...prev,
         sentThisHour: getSentThisHour(),
@@ -1010,7 +1097,11 @@ export default function FeedbacksPanel({ token }) {
         log: getAutoReplyLog(),
         running: false,
         phase: 'idle',
-        status: autoReplyEnabled ? '' : 'остановлен',
+        status: serverCronBlocksClient
+          ? 'серверный cron активен — клиентский отключён'
+          : autoReplyEnabled
+            ? ''
+            : 'остановлен',
       }));
       return undefined;
     }
@@ -1018,6 +1109,8 @@ export default function FeedbacksPanel({ token }) {
     const scheduler = createAutoReplyScheduler({
       token,
       getFeedbacks: () => dataRef.current?.feedbacks || [],
+      getCountUnanswered: () => dataRef.current?.countUnanswered ?? 0,
+      isServerCronActive: () => serverCronBlocksClient,
       onState: (state) => setAutoReplyState((prev) => ({ ...prev, ...state })),
       onFeedbacksLoaded: (list) => applyFeedbacksList(list),
       onAfterSend: (feedbackId) => {
@@ -1047,7 +1140,15 @@ export default function FeedbacksPanel({ token }) {
     scheduler.start();
 
     return () => scheduler.destroy();
-  }, [token, autoReplyEnabled, applyFeedbacksList]);
+  }, [token, autoReplyEnabled, serverCronBlocksClient, applyFeedbacksList]);
+
+  useEffect(() => {
+    if (!serverCronBlocksClient || !autoReplyEnabled) return undefined;
+    setAutoReplyEnabled(false);
+    saveAutoReplyEnabled(false);
+    autoReplyRef.current?.stop();
+    return undefined;
+  }, [serverCronBlocksClient, autoReplyEnabled]);
 
   useEffect(() => {
     if (!autoReplyEnabled) return undefined;
@@ -1062,6 +1163,7 @@ export default function FeedbacksPanel({ token }) {
   }, [autoReplyEnabled]);
 
   const toggleAutoReply = useCallback(() => {
+    if (!autoReplyEnabled && serverCronBlocksClient) return;
     const next = !autoReplyEnabled;
     setAutoReplyEnabled(next);
     saveAutoReplyEnabled(next);
@@ -1072,7 +1174,7 @@ export default function FeedbacksPanel({ token }) {
     if (!dataRef.current?.feedbacks?.length && !loadInFlightRef.current) {
       loadFeedbacksRef.current?.({ force: true });
     }
-  }, [autoReplyEnabled]);
+  }, [autoReplyEnabled, serverCronBlocksClient]);
 
   const feedbacks = data?.feedbacks || [];
   const countUnanswered = data?.countUnanswered ?? 0;
@@ -1223,28 +1325,113 @@ export default function FeedbacksPanel({ token }) {
           <div>
             <h2 className="text-sm font-semibold text-slate-800">Автоответчик</h2>
             <p className="mt-1 text-xs text-slate-600">
-              Пока вкладка открыта: черновик YandexGPT → валидация → ответ в WB. Не более{' '}
-              {AUTO_REPLY_MAX_PER_HOUR}/час (~1 каждые 6 мин).
+              {serverCronBlocksClient
+                ? 'Серверный cron отвечает без вкладки (~1 отзыв каждые 6 мин). Клиентский автоответчик отключён.'
+                : serverCronEnvReady && cronStatus.stale
+                  ? 'cron не работает (Hobby?) — включите браузерный автоответчик переключателем «Вкл».'
+                  : 'Пока вкладка открыта: черновик YandexGPT → валидация → ответ в WB. Не более '}
+              {!serverCronBlocksClient && !(serverCronEnvReady && cronStatus.stale) ? (
+                <>
+                  {AUTO_REPLY_MAX_PER_HOUR}/час (~1 каждые 6 мин).
+                </>
+              ) : null}
             </p>
           </div>
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-            <span>{autoReplyEnabled ? 'Вкл' : 'Выкл'}</span>
+          <label
+            className={`flex items-center gap-2 text-sm text-slate-700 ${
+              serverCronBlocksClient ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+            }`}
+            title={
+              serverCronBlocksClient
+                ? 'Серверный cron активен — не включайте клиентский автоответчик'
+                : undefined
+            }
+          >
+            <span>{autoReplyEnabled && !serverCronBlocksClient ? 'Вкл' : 'Выкл'}</span>
             <button
               type="button"
               role="switch"
-              aria-checked={autoReplyEnabled}
+              aria-checked={autoReplyEnabled && !serverCronBlocksClient}
+              disabled={serverCronBlocksClient}
               className={`relative h-7 w-12 rounded-full transition-colors ${
-                autoReplyEnabled ? 'bg-brand-600' : 'bg-slate-300'
-              }`}
+                autoReplyEnabled && !serverCronBlocksClient ? 'bg-brand-600' : 'bg-slate-300'
+              } ${serverCronBlocksClient ? 'pointer-events-none' : ''}`}
               onClick={toggleAutoReply}
             >
               <span
                 className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
-                  autoReplyEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                  autoReplyEnabled && !serverCronBlocksClient ? 'translate-x-5' : 'translate-x-0.5'
                 }`}
               />
             </button>
           </label>
+        </div>
+
+        {serverCronBlocksClient ? (
+          <div
+            className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900"
+            role="status"
+          >
+            <p className="font-medium">Серверный cron активен — клиентский отключён</p>
+            <p className="mt-1">
+              {aiConfig.serverCronHint ||
+                'WB_API_TOKEN задан в Vercel — ответы уходят каждые 6 мин без открытой вкладки.'}
+            </p>
+          </div>
+        ) : serverCronEnvReady && cronStatus.stale ? (
+          <div
+            className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            role="alert"
+          >
+            <p className="font-medium">cron не работает (Hobby?) — включите браузерный автоответчик</p>
+            <p className="mt-1">
+              {cronStatus.message ||
+                'Cron не отвечал >25 мин. На Vercel Hobby расписание */6 недоступно — включите «Вкл» или перейдите на Pro.'}
+            </p>
+            {cronStatus.hobbyLimitHint ? (
+              <p className="mt-1">
+                Переключатель «Вкл» доступен — ответы пойдут из браузера (~{AUTO_REPLY_MAX_PER_HOUR}/час).
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div
+          className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+            cronStatus.recentlyActive
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+              : cronStatus.stale && serverCronEnvReady
+                ? 'border-amber-200 bg-amber-50 text-amber-900'
+                : 'border-slate-200 bg-slate-50 text-slate-700'
+          }`}
+          role="status"
+        >
+          <p className="font-medium">
+            Последний cron:{' '}
+            {cronStatus.lastRun
+              ? `${formatAutoReplyTime(cronStatus.lastRun.at)} · ${formatCronAction(cronStatus.lastRun.action)}`
+              : cronStatus.loading
+                ? 'загрузка…'
+                : 'нет данных'}
+          </p>
+          {cronStatus.lastRun?.error ? (
+            <p className="mt-1 text-rose-700">{cronStatus.lastRun.error}</p>
+          ) : cronStatus.message && !cronStatus.recentlyActive ? (
+            <p className="mt-1">{cronStatus.message}</p>
+          ) : null}
+          {cronStatus.runs?.length > 1 ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer font-medium">История cron ({cronStatus.runs.length})</summary>
+              <ul className="mt-1 max-h-32 overflow-y-auto">
+                {cronStatus.runs.slice(0, 10).map((run, index) => (
+                  <li key={`${run.at}-${index}`} className="border-b border-slate-200/60 py-1 last:border-0">
+                    {formatAutoReplyTime(run.at)} · {formatCronAction(run.action)}
+                    {run.error ? ` — ${run.error}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
         </div>
 
         <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
@@ -1258,7 +1445,7 @@ export default function FeedbacksPanel({ token }) {
           </p>
           <p>
             <span className="font-medium text-slate-700">Следующий: </span>
-            {autoReplyEnabled
+            {autoReplyEnabled && !serverCronBlocksClient
               ? autoReplyState.posting
                 ? 'отправка…'
                 : autoReplyState.running
@@ -1268,12 +1455,47 @@ export default function FeedbacksPanel({ token }) {
                     : formatMinutes(autoReplyState.nextInMs) > 0
                       ? `через ${formatMinutes(autoReplyState.nextInMs)} мин`
                       : 'скоро'
-              : '—'}
+              : serverCronBlocksClient
+                ? 'сервер · ~6 мин'
+                : '—'}
           </p>
         </div>
 
-        {autoReplyEnabled ? (
-          <div className="mt-2 space-y-1">
+        {autoReplyEnabled && !serverCronBlocksClient ? (
+          <div className="mt-2 space-y-2">
+            {!aiConfig.serverCronEnabled && !aiConfig.loading ? (
+              <div
+                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                role="status"
+              >
+                <p className="font-medium">Серверный автоответчик выключен</p>
+                <p className="mt-1">
+                  {aiConfig.serverCronHint ||
+                    'WB_API_TOKEN не задан в Vercel — ответы уходят только пока эта вкладка открыта и переключатель «Вкл».'}
+                </p>
+              </div>
+            ) : aiConfig.serverCronEnabled && !aiConfig.serverCronReady && !aiConfig.loading ? (
+              <div
+                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                role="status"
+              >
+                <p className="font-medium">Серверный cron не готов</p>
+                <p className="mt-1">{aiConfig.serverCronHint}</p>
+              </div>
+            ) : null}
+            {autoReplyState.phase === 'error' || autoReplyState.lastResult?.ok === false ? (
+              <div
+                className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"
+                role="alert"
+              >
+                <p className="font-semibold">Автоответ не отправлен</p>
+                <p className="mt-1">
+                  {autoReplyState.lastResult?.reason ||
+                    autoReplyState.status ||
+                    'Неизвестная ошибка — смотрите журнал ниже'}
+                </p>
+              </div>
+            ) : null}
             <p
               className={`text-xs font-medium ${
                 autoReplyState.phase === 'error'
@@ -1307,7 +1529,11 @@ export default function FeedbacksPanel({ token }) {
 
         {!autoReplyEnabled ? (
           <p className="mt-2 text-xs text-slate-500">
-            Включите переключатель — нужен токен WB и YandexGPT на сервере. Вкладку держите открытой.
+            Включите переключатель — нужен токен WB (категория «Вопросы и отзывы») и YandexGPT на сервере.
+            Вкладку держите открытой и активной (в фоне браузер замедляет таймеры).
+            {!aiConfig.serverCronEnabled && !aiConfig.loading
+              ? ' Для работы без вкладки задайте WB_API_TOKEN в Vercel.'
+              : ''}
           </p>
         ) : null}
 
