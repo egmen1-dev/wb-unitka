@@ -31,6 +31,12 @@ const NUMBER_FIELDS = [
   { key: 'fbsAdditionalLiter', label: 'FBS: доп. литр, ₽', step: 1 },
   { key: 'fbsCoeff', label: 'Коэфф. склада FBS', step: 0.1 },
   { key: 'fbsCommissionMarkup', label: 'FBS: +к FBO, %', step: 0.1, hint: 'По умолчанию 3,5 п.п.' },
+  {
+    key: 'fbsAvgDeliveryHours',
+    label: 'FBS: время доставки, ч',
+    step: 1,
+    hint: 'Для надбавки к комиссии (калькулятор WB, обычно 48)',
+  },
   { key: 'returnLogisticsMarkup', label: 'Наценка возврата, %', step: 0.01 },
   { key: 'defaultWarehouseCoeff', label: 'Коэфф. склада FBO', step: 0.1 },
   {

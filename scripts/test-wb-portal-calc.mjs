@@ -183,6 +183,69 @@ check(
     fbsOnlyLogistics.profitFbs != null
 );
 
+const ARTICLE_77112 = {
+  vendorCode: '77112',
+  subjectName: 'Сучкорезы',
+  salePrice: 5000,
+  basePrice: 5000,
+  ourPrice: 5000,
+  purchasePrice: 406,
+  fboCategoryRate: 0.203,
+  fbsCategoryRate: 0.238,
+  fbsAvgDeliveryHours: 29,
+  lengthCm: 35,
+  widthCm: 12,
+  heightCm: 6,
+  warehouseCoeff: 2.2,
+  fbsCoeff: 2.2,
+  stockFbs: 1,
+  buyoutRateFbs: 0.95,
+  commissionActualPct: 0.28,
+};
+
+const wbPortalSettings = mergeUnitSettings({
+  preferActualRates: true,
+  includeAcquiring: false,
+  includeAdvertising: false,
+  includeAcceptance: false,
+  includeProcessing: false,
+  defectRate: 0,
+  includeVat: false,
+  taxRate: 0.11,
+  useBuyoutWeightedLogistics: false,
+  includeLogisticsIndices: false,
+});
+
+const row77112 = calculateUnitEconomicsRow(ARTICLE_77112, wbPortalSettings);
+
+console.log('\n77112 @ 5000₽ — Сучкорезы (калькулятор WB)\n');
+
+check(
+  'комиссия FBS ~34.9% = 1745₽ (48ч, kgvp + 3.5% + надбавка)',
+  near(row77112.fbsCategoryRate, 0.349, 0.005) && near(row77112.fbsCommissionRub, 1745, 5)
+);
+check(
+  'факт из отчёта не подменяет тарифную комиссию',
+  row77112.fbsCategorySource !== 'actual' && row77112.commissionActualPct === 0.28
+);
+check(
+  '48ч из настроек, не 29ч timeToReady из кабинета',
+  row77112.fbsAvgDeliveryHours === 48 && row77112.fbsAvgDeliveryHoursReport === 29
+);
+check(
+  'надбавка за доставку 11.1 п.п. при 48ч',
+  near(row77112.fbsDeliverySurcharge, 0.111, 0.001)
+);
+
+console.log('Breakdown 77112:', {
+  fbsCommissionRub: Math.round(row77112.fbsCommissionRub),
+  fbsCategoryRate: row77112.fbsCategoryRate,
+  logisticsFbs: Math.round(row77112.logisticsFbs),
+  taxRub: Math.round(row77112.taxRub),
+  profitFbs: Math.round(row77112.profitFbs),
+  marginFbs: row77112.marginFbs,
+});
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);
