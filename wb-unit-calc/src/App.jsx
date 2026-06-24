@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from 'react';
 import { DEFAULT_UNIT_SETTINGS, mergeUnitSettings } from '@lib/unit-economics/settings.js';
 import UpdateBanner from './components/UpdateBanner';
 import AppShell from './components/AppShell';
@@ -76,12 +76,14 @@ import { slimRowsForCache } from '@lib/unit-economics/row-cache.js';
 import {
   applyPriceUpdatesToRows,
   buildEffectiveWbCache,
+  isPriceDataStale,
   isRealizationStale,
   mergeWorkspaceRowsPreservingLocalPrices,
   resolveRealizationSyncedAt,
   shouldSkipRealizationFetch,
 } from '@lib/wb-sync-cache.js';
 import { createRecalcRows } from './lib/recalc-rows-cache';
+import { useChunkedRecalcRows } from './lib/use-chunked-recalc-rows';
 import { setProductOverride, reconcileDraftOverridesAfterPricePatch } from './lib/product-overrides';
 import { readJsonResponse } from './lib/http';
 import { isAdvertRateLimitMessage } from '@lib/wb-advert-stats.js';
@@ -411,14 +413,18 @@ export default function App() {
   const skipCloudSave = useRef(true);
   const syncRunId = useRef(0);
   const priceRefreshStartedRef = useRef(false);
+  const priceRefreshFailedAtRef = useRef(0);
+  const priceRefreshingRef = useRef(false);
   const realizationRefreshStartedRef = useRef(false);
   const persistTimer = useRef(null);
   const pushToCloudRef = useRef(async () => {});
+  const cloudPushInFlightRef = useRef(false);
   const workspaceUpdatedAtRef = useRef(workspaceUpdatedAt);
   const settingsUpdatedAtRef = useRef(settingsUpdatedAt);
   const lastLocalPushAtRef = useRef(0);
   const lastLocalPriceRefreshAtRef = useRef(0);
   const lastFocusPullAtRef = useRef(0);
+  priceRefreshingRef.current = priceRefreshing;
   workspaceUpdatedAtRef.current = workspaceUpdatedAt;
   settingsUpdatedAtRef.current = settingsUpdatedAt;
   const baseRowsRef = useRef(baseRows);
@@ -440,9 +446,17 @@ export default function App() {
     [baseRows]
   );
 
-  const rows = useMemo(
-    () => recalcRowsCached(baseRows, purchases, settings, productOverrides),
-    [baseRows, purchases, settings, productOverrides]
+  const deferredBaseRows = useDeferredValue(baseRows);
+  const deferredPurchases = useDeferredValue(purchases);
+  const deferredProductOverrides = useDeferredValue(productOverrides);
+  const deferredSettings = useDeferredValue(settings);
+
+  const { rows, recalcPending } = useChunkedRecalcRows(
+    recalcRowsCached,
+    deferredBaseRows,
+    deferredPurchases,
+    deferredSettings,
+    deferredProductOverrides
   );
 
   const isTeamCreator = useMemo(
@@ -509,8 +523,10 @@ export default function App() {
   }, []);
 
   const pushToCloud = useCallback(async () => {
-    if (!team || skipCloudSave.current) return;
+    if (!team || skipCloudSave.current || cloudPushInFlightRef.current) return;
+    if (priceRefreshingRef.current) return;
 
+    cloudPushInFlightRef.current = true;
     const accessForCloud = isTeamCreator
       ? teamAccess
       : touchTeamMember(teamAccess, getClientId());
@@ -534,13 +550,17 @@ export default function App() {
       ownerClientId: ownerClientIdForPayload(ownerClientId),
       teamAccess: accessForCloud,
     });
-    const result = await saveWorkspaceRemote(team, payload);
-    lastLocalPushAtRef.current = Date.now();
-    const serverUpdatedAt = formatWorkspaceUpdatedAt(result?.updatedAt);
-    const updatedAt = serverUpdatedAt || new Date().toISOString();
-    setWorkspaceUpdatedAt(updatedAt);
-    workspaceUpdatedAtRef.current = updatedAt;
-    saveWorkspaceSnapshot(team, { payload, updatedAt, name: teamName });
+    try {
+      const result = await saveWorkspaceRemote(team, payload);
+      lastLocalPushAtRef.current = Date.now();
+      const serverUpdatedAt = formatWorkspaceUpdatedAt(result?.updatedAt);
+      const updatedAt = serverUpdatedAt || new Date().toISOString();
+      setWorkspaceUpdatedAt(updatedAt);
+      workspaceUpdatedAtRef.current = updatedAt;
+      saveWorkspaceSnapshot(team, { payload, updatedAt, name: teamName });
+    } finally {
+      cloudPushInFlightRef.current = false;
+    }
   }, [
     team,
     teamName,
@@ -565,28 +585,38 @@ export default function App() {
     const unchanged = Boolean(
       ifUnchangedSince && workspaceTimestampsEqual(data.updatedAt, ifUnchangedSince)
     );
+    if (!unchanged && priceRefreshingRef.current) {
+      return data;
+    }
     if (!unchanged) {
       const hadLocalRows = baseRowsRef.current.length > 0;
       const cloudEmpty = !data.payload?.cache?.rows?.length;
-      applyWorkspacePayload(
-        data.payload,
-        {
-          setOwnerClientId,
-          setTeamAccess,
-          setProfiles,
-          setActiveProfileId,
-          setPurchases,
-          setSettings,
-          setSettingsUpdatedAt,
-          setSupplierCatalogs,
-          setProductOverrides,
-          setBaseRows,
-          setSyncedAt,
-          setMeta,
-          setWbProductCache,
-        },
-        { keepRows: baseRowsRef.current, keepProfiles: profilesRef.current, keepMeta: metaRef.current, localSettingsUpdatedAt: settingsUpdatedAtRef.current }
-      );
+      startTransition(() => {
+        applyWorkspacePayload(
+            data.payload,
+            {
+              setOwnerClientId,
+              setTeamAccess,
+              setProfiles,
+              setActiveProfileId,
+              setPurchases,
+              setSettings,
+              setSettingsUpdatedAt,
+              setSupplierCatalogs,
+              setProductOverrides,
+              setBaseRows,
+              setSyncedAt,
+              setMeta,
+              setWbProductCache,
+            },
+            {
+              keepRows: baseRowsRef.current,
+              keepProfiles: profilesRef.current,
+              keepMeta: metaRef.current,
+              localSettingsUpdatedAt: settingsUpdatedAtRef.current,
+            }
+          );
+      });
       if (hadLocalRows && cloudEmpty) {
         setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
       }
@@ -633,6 +663,7 @@ export default function App() {
 
     async function pullRemote() {
       if (skipCloudSave.current) return;
+      if (priceRefreshingRef.current || cloudPushInFlightRef.current) return;
       if (Date.now() - lastLocalPushAtRef.current < 15000) return;
       if (Date.now() - lastLocalPriceRefreshAtRef.current < 60000) return;
       try {
@@ -645,30 +676,32 @@ export default function App() {
         }
         const hadLocalRows = baseRowsRef.current.length > 0;
         const cloudEmpty = !data.payload?.cache?.rows?.length;
-        applyWorkspacePayload(
-          data.payload,
-          {
-            setOwnerClientId,
-            setTeamAccess,
-            setProfiles,
-            setActiveProfileId,
-            setPurchases,
-            setSettings,
-            setSettingsUpdatedAt,
-            setSupplierCatalogs,
-            setProductOverrides,
-            setBaseRows,
-            setSyncedAt,
-            setMeta,
-            setWbProductCache,
-          },
-          {
-            keepRows: baseRowsRef.current,
-            keepProfiles: profilesRef.current,
-            keepMeta: metaRef.current,
-            localSettingsUpdatedAt: settingsUpdatedAtRef.current,
-          }
-        );
+        startTransition(() => {
+          applyWorkspacePayload(
+            data.payload,
+            {
+              setOwnerClientId,
+              setTeamAccess,
+              setProfiles,
+              setActiveProfileId,
+              setPurchases,
+              setSettings,
+              setSettingsUpdatedAt,
+              setSupplierCatalogs,
+              setProductOverrides,
+              setBaseRows,
+              setSyncedAt,
+              setMeta,
+              setWbProductCache,
+            },
+            {
+              keepRows: baseRowsRef.current,
+              keepProfiles: profilesRef.current,
+              keepMeta: metaRef.current,
+              localSettingsUpdatedAt: settingsUpdatedAtRef.current,
+            }
+          );
+        });
         if (hadLocalRows && cloudEmpty) {
           setCloudStatus('В облаке нет таблицы — нажмите «Быстро», чтобы загрузить данные с WB.');
         }
@@ -695,7 +728,9 @@ export default function App() {
   }, [team, cloudSyncing, loading, enriching]);
 
   useEffect(() => {
-    if (!team || loading || enriching || cloudSyncing) return undefined;
+    if (!team || loading || enriching || cloudSyncing || priceRefreshing || cloudRefreshing) {
+      return undefined;
+    }
     const timer = setTimeout(() => {
       pushToCloudRef.current().catch((err) => setCloudStatus(`Ошибка сохранения: ${err.message}`));
     }, 4000);
@@ -705,6 +740,8 @@ export default function App() {
     loading,
     enriching,
     cloudSyncing,
+    priceRefreshing,
+    cloudRefreshing,
     profiles,
     activeProfileId,
     purchases,
@@ -989,7 +1026,7 @@ export default function App() {
       setMeta((prev) => ({ ...prev, pricesSyncError: msg }));
       return false;
     }
-    if (loading || enriching || priceRefreshing) {
+    if (loading || enriching || priceRefreshingRef.current) {
       return false;
     }
 
@@ -1053,19 +1090,21 @@ export default function App() {
             pricesLastMissing: pricesMissing,
             pricesSyncError: null,
           };
-          setBaseRows(nextRows);
-          setProductOverrides((prev) =>
-            reconcileDraftOverridesAfterPricePatch(prevRows, data.priceUpdates, prev)
-          );
-          setSyncedAt(data.syncedAt || pricesSyncedAt);
-          setMeta((prev) => ({
-            ...prev,
-            pricesSyncedAt,
-            pricesLastUpdated: pricesUpdated,
-            pricesLastUnchanged: pricesUnchanged,
-            pricesLastMissing: pricesMissing,
-            pricesSyncError: null,
-          }));
+          startTransition(() => {
+            setBaseRows(nextRows);
+            setProductOverrides((prev) =>
+              reconcileDraftOverridesAfterPricePatch(prevRows, data.priceUpdates, prev)
+            );
+            setSyncedAt(data.syncedAt || pricesSyncedAt);
+            setMeta((prev) => ({
+              ...prev,
+              pricesSyncedAt,
+              pricesLastUpdated: pricesUpdated,
+              pricesLastUnchanged: pricesUnchanged,
+              pricesLastMissing: pricesMissing,
+              pricesSyncError: null,
+            }));
+          });
           setCloudStatus(
             `Обновлено ${pricesUpdated} цен WB · проверено ${matched}` +
               (pricesUnchanged > 0 ? ` · без изменений ${pricesUnchanged}` : '') +
@@ -1078,14 +1117,17 @@ export default function App() {
           `Проверено ${matched} цен WB · без изменений` +
           (pricesUnchanged > 0 ? ` (${pricesUnchanged})` : '') +
           (pricesMissing > 0 ? ` · не найдено в API ${pricesMissing}` : '');
+        const checkedAt = data.pricesSyncedAt || data.syncedAt || new Date().toISOString();
         setCloudStatus(unchangedMsg);
-        setMeta((prev) => ({
-          ...prev,
-          pricesLastChecked: data.pricesSyncedAt || data.syncedAt || new Date().toISOString(),
-          pricesLastUnchanged: pricesUnchanged,
-          pricesLastMissing: pricesMissing,
-          pricesSyncError: null,
-        }));
+        startTransition(() => {
+          setMeta((prev) => ({
+            ...prev,
+            pricesLastChecked: checkedAt,
+            pricesLastUnchanged: pricesUnchanged,
+            pricesLastMissing: pricesMissing,
+            pricesSyncError: null,
+          }));
+        });
         return true;
       }
 
@@ -1100,6 +1142,7 @@ export default function App() {
       const msg = `Не удалось обновить цены: ${err.message}`;
       setCloudStatus(msg);
       setMeta((prev) => ({ ...prev, pricesSyncError: msg }));
+      priceRefreshFailedAtRef.current = Date.now();
       if (manual) console.warn('[unit-calc] price refresh failed:', err.message);
       return false;
     } finally {
@@ -1110,7 +1153,6 @@ export default function App() {
     baseRows.length,
     loading,
     enriching,
-    priceRefreshing,
     wbProductCache,
     syncedAt,
   ]);
@@ -1365,6 +1407,7 @@ export default function App() {
   const handleFullSync = useCallback(() => runSync('full'), [runSync]);
   const handleRefreshPrices = useCallback(() => {
     priceRefreshStartedRef.current = false;
+    priceRefreshFailedAtRef.current = 0;
     return refreshPrices({ manual: true });
   }, [refreshPrices]);
 
@@ -1406,14 +1449,44 @@ export default function App() {
   }, [cloudSyncing, loading, enriching, activeProfile?.token, baseRows, meta, runSync]);
 
   useEffect(() => {
-    if (cloudSyncing || cloudRefreshing || loading || enriching || priceRefreshing) return;
-    if (!activeProfile?.token || !canSyncWb || !baseRows.length) return;
-    if (priceRefreshStartedRef.current) return;
+    if (cloudSyncing || cloudRefreshing || loading || enriching || priceRefreshing) return undefined;
+    if (!activeProfile?.token || !canSyncWb || !baseRows.length) return undefined;
+    if (priceRefreshStartedRef.current) return undefined;
+
+    const lastPriceCheck = metaRef.current?.pricesSyncedAt || metaRef.current?.pricesLastChecked;
+    if (lastPriceCheck && !isPriceDataStale(lastPriceCheck)) {
+      priceRefreshStartedRef.current = true;
+      return undefined;
+    }
+
+    if (Date.now() - priceRefreshFailedAtRef.current < 5 * 60 * 1000) {
+      priceRefreshStartedRef.current = true;
+      return undefined;
+    }
 
     priceRefreshStartedRef.current = true;
-    refreshPrices().then((ok) => {
-      if (!ok) priceRefreshStartedRef.current = false;
-    });
+    let cancelled = false;
+
+    const run = () => {
+      if (cancelled) return;
+      refreshPrices().catch(() => {});
+    };
+
+    let idleId;
+    if (typeof requestIdleCallback === 'function') {
+      idleId = requestIdleCallback(run, { timeout: 3000 });
+    } else {
+      idleId = setTimeout(run, 1200);
+    }
+
+    return () => {
+      cancelled = true;
+      if (typeof requestIdleCallback === 'function' && typeof cancelIdleCallback === 'function') {
+        cancelIdleCallback(idleId);
+      } else {
+        clearTimeout(idleId);
+      }
+    };
   }, [
     cloudSyncing,
     cloudRefreshing,
@@ -1842,6 +1915,10 @@ export default function App() {
                 onDashboardQueryConsumed={() => setDashboardQuery('')}
               />
             </>
+          ) : recalcPending ? (
+            <section className="panel py-12 text-center">
+              <p className="text-sm text-slate-500">Пересчёт маржи…</p>
+            </section>
           ) : (
             <section className="panel py-12 text-center">
               <p className="text-sm font-medium text-slate-700">Нет данных для расчёта</p>

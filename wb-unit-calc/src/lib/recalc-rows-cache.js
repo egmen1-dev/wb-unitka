@@ -136,15 +136,16 @@ export function createRecalcRows() {
   const byNm = new Map();
   let settingsSig = '';
 
-  function recalcRows(baseRows, purchases, settings, productOverrides = {}) {
+  function recalcRows(baseRows, purchases, settings, productOverrides = {}, chunk = null) {
     settingsSig = JSON.stringify(settings);
-    const out = new Array(baseRows.length);
-    const activeNm = new Set();
+    const start = chunk?.start ?? 0;
+    const end = chunk?.end ?? baseRows.length;
+    const finalize = chunk?.finalize ?? !chunk;
+    const out = chunk?.out ?? new Array(baseRows.length);
 
-    for (let i = 0; i < baseRows.length; i += 1) {
+    for (let i = start; i < end; i += 1) {
       const row = baseRows[i];
       const nmId = row.nmId ?? `i:${i}`;
-      activeNm.add(nmId);
       const vendor = String(row.vendorCode || '');
       const purchasePrice = purchasePriceFor(row, purchases);
       const key = `${buildRowSig(row)}\x1f${purchasePrice}\x1f${overrideSig(productOverrides, vendor)}\x1f${settingsSig}`;
@@ -167,8 +168,14 @@ export function createRecalcRows() {
       out[i] = calc;
     }
 
-    for (const nmId of byNm.keys()) {
-      if (!activeNm.has(nmId)) byNm.delete(nmId);
+    if (finalize) {
+      const activeNm = new Set();
+      for (let i = 0; i < baseRows.length; i += 1) {
+        activeNm.add(baseRows[i].nmId ?? `i:${i}`);
+      }
+      for (const nmId of byNm.keys()) {
+        if (!activeNm.has(nmId)) byNm.delete(nmId);
+      }
     }
 
     return out;
