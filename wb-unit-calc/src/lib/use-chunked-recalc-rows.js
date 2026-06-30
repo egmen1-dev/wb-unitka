@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState, startTransition } from 'react';
 
 /** Catalogs at or below this size recalc in one transition (fast enough). */
-const SYNC_RECALC_LIMIT = 280;
+const SYNC_RECALC_LIMIT = 400;
 /** Rows processed per idle slice for large catalogs. */
-const CHUNK_SIZE = 96;
+const CHUNK_SIZE = 256;
+/** First slice runs synchronously so the table can paint immediately. */
+const INITIAL_SYNC_CHUNK = 200;
+
+function shellRows(baseRows) {
+  return baseRows.map((row) => ({ ...row }));
+}
 
 function scheduleIdle(fn) {
   if (typeof requestIdleCallback === 'function') {
-    return requestIdleCallback(fn, { timeout: 64 });
+    return requestIdleCallback(fn, { timeout: 48 });
   }
   return setTimeout(fn, 0);
 }
@@ -20,40 +26,75 @@ function cancelIdle(id) {
   }
 }
 
+function bootstrapLargeCatalog(recalcFn, baseRows, purchases, settings, productOverrides) {
+  const out = shellRows(baseRows);
+  const firstEnd = Math.min(INITIAL_SYNC_CHUNK, baseRows.length);
+  recalcFn(baseRows, purchases, settings, productOverrides, {
+    out,
+    start: 0,
+    end: firstEnd,
+    finalize: false,
+  });
+  return { out, index: firstEnd };
+}
+
 /**
  * Recalculate unit-economics rows without blocking the main thread on large catalogs.
- * Keeps the previous rows visible until the next full pass completes.
+ * Publishes shell rows immediately, then patches calculated fields chunk by chunk.
  */
 export function useChunkedRecalcRows(recalcFn, baseRows, purchases, settings, productOverrides) {
-  const [rows, setRows] = useState(() => {
-    if (!baseRows.length) return [];
-    if (baseRows.length > SYNC_RECALC_LIMIT) return [];
-    return recalcFn(baseRows, purchases, settings, productOverrides);
+  const [state, setState] = useState(() => {
+    if (!baseRows.length) {
+      return { rows: [], computed: 0 };
+    }
+    if (baseRows.length <= SYNC_RECALC_LIMIT) {
+      return {
+        rows: recalcFn(baseRows, purchases, settings, productOverrides),
+        computed: baseRows.length,
+      };
+    }
+    const { out, index } = bootstrapLargeCatalog(
+      recalcFn,
+      baseRows,
+      purchases,
+      settings,
+      productOverrides
+    );
+    return { rows: out, computed: index };
   });
-  const rowsRef = useRef(rows);
-  rowsRef.current = rows;
   const runRef = useRef(0);
 
   useEffect(() => {
     const runId = ++runRef.current;
 
     if (!baseRows.length) {
-      setRows([]);
+      setState({ rows: [], computed: 0 });
       return undefined;
     }
 
     if (baseRows.length <= SYNC_RECALC_LIMIT) {
       startTransition(() => {
         if (runId !== runRef.current) return;
-        setRows(recalcFn(baseRows, purchases, settings, productOverrides));
+        setState({
+          rows: recalcFn(baseRows, purchases, settings, productOverrides),
+          computed: baseRows.length,
+        });
       });
       return undefined;
     }
 
     let cancelled = false;
     let idleId = null;
-    const out = new Array(baseRows.length);
-    let index = 0;
+    const { out, index: startIndex } = bootstrapLargeCatalog(
+      recalcFn,
+      baseRows,
+      purchases,
+      settings,
+      productOverrides
+    );
+    let index = startIndex;
+
+    setState({ rows: out, computed: index });
 
     const step = () => {
       if (cancelled || runId !== runRef.current) return;
@@ -67,18 +108,19 @@ export function useChunkedRecalcRows(recalcFn, baseRows, purchases, settings, pr
       });
       index = end;
 
-      if (index < baseRows.length) {
-        idleId = scheduleIdle(step);
-        return;
-      }
-
       startTransition(() => {
         if (runId !== runRef.current) return;
-        setRows(out);
+        setState({ rows: out, computed: index });
       });
+
+      if (index < baseRows.length) {
+        idleId = scheduleIdle(step);
+      }
     };
 
-    idleId = scheduleIdle(step);
+    if (index < baseRows.length) {
+      idleId = scheduleIdle(step);
+    }
 
     return () => {
       cancelled = true;
@@ -86,6 +128,9 @@ export function useChunkedRecalcRows(recalcFn, baseRows, purchases, settings, pr
     };
   }, [recalcFn, baseRows, purchases, settings, productOverrides]);
 
-  const recalcPending = baseRows.length > 0 && rows.length !== baseRows.length;
-  return { rows, recalcPending };
+  const recalcPending = baseRows.length > 0 && state.computed < baseRows.length;
+  const recalcProgress =
+    baseRows.length > 0 ? Math.min(100, Math.round((state.computed / baseRows.length) * 100)) : 100;
+
+  return { rows: state.rows, recalcPending, recalcProgress };
 }

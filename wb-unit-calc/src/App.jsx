@@ -451,7 +451,7 @@ export default function App() {
   const deferredProductOverrides = useDeferredValue(productOverrides);
   const deferredSettings = useDeferredValue(settings);
 
-  const { rows, recalcPending } = useChunkedRecalcRows(
+  const { rows, recalcPending, recalcProgress } = useChunkedRecalcRows(
     recalcRowsCached,
     deferredBaseRows,
     deferredPurchases,
@@ -779,22 +779,28 @@ export default function App() {
       if (bootPayload?.cache?.rows?.length) {
         skipCloudSave.current = false;
         suppressAutoSyncRef.current = true;
+        const bootUpdatedAt = boot.cache?.updatedAt || '';
         const runCloudRefresh = () => {
-          setCloudRefreshing(true);
-          refreshTeamWorkspace(candidate, {
-            ifUnchangedSince: boot.cache?.updatedAt || workspaceUpdatedAt || '',
-          })
+          refreshTeamWorkspace(candidate, { ifUnchangedSince: bootUpdatedAt })
+            .then((data) => {
+              if (
+                bootUpdatedAt &&
+                workspaceTimestampsEqual(data.updatedAt, bootUpdatedAt)
+              ) {
+                return;
+              }
+              setCloudStatus('Данные обновлены из облака');
+            })
             .catch((err) => {
               if (!err.needsTeam) {
                 setCloudStatus('Облако недоступно — показаны локальные данные');
               }
-            })
-            .finally(() => setCloudRefreshing(false));
+            });
         };
         if (typeof requestIdleCallback === 'function') {
-          requestIdleCallback(runCloudRefresh, { timeout: 4000 });
+          requestIdleCallback(runCloudRefresh, { timeout: 12000 });
         } else {
-          setTimeout(runCloudRefresh, 300);
+          setTimeout(runCloudRefresh, 2000);
         }
         return;
       }
@@ -1449,9 +1455,9 @@ export default function App() {
   }, [cloudSyncing, loading, enriching, activeProfile?.token, baseRows, meta, runSync]);
 
   useEffect(() => {
-    if (cloudSyncing || cloudRefreshing || loading || enriching || priceRefreshing) return undefined;
+    if (cloudSyncing || loading || enriching) return undefined;
     if (!activeProfile?.token || !canSyncWb || !baseRows.length) return undefined;
-    if (priceRefreshStartedRef.current) return undefined;
+    if (priceRefreshStartedRef.current || priceRefreshingRef.current) return undefined;
 
     const lastPriceCheck = metaRef.current?.pricesSyncedAt || metaRef.current?.pricesLastChecked;
     if (lastPriceCheck && !isPriceDataStale(lastPriceCheck)) {
@@ -1474,9 +1480,9 @@ export default function App() {
 
     let idleId;
     if (typeof requestIdleCallback === 'function') {
-      idleId = requestIdleCallback(run, { timeout: 3000 });
+      idleId = requestIdleCallback(run, { timeout: 1500 });
     } else {
-      idleId = setTimeout(run, 1200);
+      idleId = setTimeout(run, 400);
     }
 
     return () => {
@@ -1489,10 +1495,8 @@ export default function App() {
     };
   }, [
     cloudSyncing,
-    cloudRefreshing,
     loading,
     enriching,
-    priceRefreshing,
     activeProfile?.token,
     canSyncWb,
     baseRows.length,
@@ -1500,7 +1504,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (cloudSyncing || cloudRefreshing || loading || enriching || priceRefreshing) return;
+    if (cloudSyncing || loading || enriching || priceRefreshing) return;
     if (!activeProfile?.token || !canSyncWb || !baseRows.length || !syncedAt) return;
     if (realizationRefreshStartedRef.current) return;
 
@@ -1528,7 +1532,6 @@ export default function App() {
     })();
   }, [
     cloudSyncing,
-    cloudRefreshing,
     loading,
     enriching,
     priceRefreshing,
@@ -1542,7 +1545,7 @@ export default function App() {
     applySyncResult,
   ]);
 
-  const syncActive = loading || enriching || priceRefreshing;
+  const syncActive = loading || enriching;
   const showSyncProgress = Boolean(syncSteps?.length && (syncActive || syncSteps.some((s) => s.status === 'error')));
 
   useEffect(() => {
@@ -1882,6 +1885,24 @@ export default function App() {
           )}
           {rows.length > 0 ? (
             <>
+              {recalcPending ? (
+                <div
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-600"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Пересчёт маржи: {recalcProgress}%
+                  <span
+                    className="ml-2 inline-block h-1.5 w-24 align-middle rounded-full bg-slate-200"
+                    aria-hidden
+                  >
+                    <span
+                      className="block h-full rounded-full bg-brand-600 transition-[width] duration-150"
+                      style={{ width: `${recalcProgress}%` }}
+                    />
+                  </span>
+                </div>
+              ) : null}
               <SummaryDashboard
                 rows={rows}
                 settings={settings}
