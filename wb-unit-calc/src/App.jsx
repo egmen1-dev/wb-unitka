@@ -1754,7 +1754,7 @@ export default function App() {
             onClick={handleSync}
             title={
               canSyncWb
-                ? 'Цены, остатки, изменённые карточки (~20–40 сек)'
+                ? 'Цены, остатки, комиссии WB, изменённые карточки (~20–40 сек)'
                 : 'Синхронизация WB доступна участникам с правом «Данные»'
             }
           >
@@ -1765,7 +1765,11 @@ export default function App() {
             className="btn-header-secondary min-w-[7.5rem]"
             disabled={syncActive || !canSyncWb}
             onClick={handleFullSync}
-            title={canSyncWb ? 'Весь каталог карточек (~1–2 мин)' : 'Нужно право «Данные»'}
+            title={
+              canSyncWb
+                ? 'Весь каталог + свежие комиссии и тарифы логистики (~1–2 мин)'
+                : 'Нужно право «Данные»'
+            }
           >
             Полностью
           </button>
@@ -2062,9 +2066,9 @@ export default function App() {
           <section className="panel">
             <h2 className="text-sm font-semibold text-slate-800">Синхронизация с WB</h2>
             <p className="mt-1 text-xs text-slate-500">
-              <strong>Быстро</strong> — цены, остатки, новые и изменённые карточки.{' '}
-              <strong>Полностью</strong> — весь каталог (~660 SKU), если что-то не подтянулось.{' '}
-              <strong>Обновить цены</strong> — только колонка «Продажа» с WB (~5–15 сек).
+              <strong>Быстро</strong> — цены, остатки, комиссии категорий WB, новые и изменённые
+              карточки. <strong>Полностью</strong> — весь каталог (~660 SKU) и тарифы логистики
+              заново. <strong>Обновить цены</strong> — только колонка «Продажа» с WB (~5–15 сек).
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" className="btn-primary" disabled={syncActive} onClick={handleSync}>

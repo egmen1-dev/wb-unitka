@@ -17,6 +17,7 @@ import {
   fetchWbOffices,
   hasOfficialWbApi,
   withWbApiToken,
+  clearMemoryTariffs,
 } from '../../lib/wb-official-api.js';
 import { fetchNmOrders7d } from '../../lib/wb-sales-funnel.js';
 import { fetchNmAdvertStats, serializeAdvertLookup } from '../../lib/wb-advert-stats.js';
@@ -76,15 +77,41 @@ import {
   warehouseAcceptsCargoType,
 } from '../../lib/wb-cargo-type.js';
 
-async function resolveTariffs(wbCache) {
-  const hydrated = hydrateTariffCache(wbCache?.tariffCache);
-  if (hydrated) {
-    return { ...hydrated, tariffCache: wbCache.tariffCache };
+/**
+ * Комиссии — не берём из клиентского tariffCache (там могли застрять старые ставки).
+ * Короткий server memory (5 мин) защищает от лимита API при bootstrap→realization→enrich.
+ * Box-тарифы логистики можно брать из клиентского кэша, если он ещё свежий.
+ * @param {object|null} wbCache
+ * @param {{ forceRefreshAll?: boolean }} [options]
+ */
+async function resolveTariffs(wbCache, { forceRefreshAll = false } = {}) {
+  const hydrated = forceRefreshAll ? null : hydrateTariffCache(wbCache?.tariffCache);
+
+  if (forceRefreshAll) {
+    clearMemoryTariffs('commission');
   }
 
-  const commissionsBySubject = await fetchCommissionTariffs();
-  await sleep(600);
-  const boxTariffs = await fetchBoxTariffs();
+  let commissionsBySubject = null;
+  try {
+    commissionsBySubject = await fetchCommissionTariffs();
+  } catch (error) {
+    if (hydrated?.commissionsBySubject?.size) {
+      console.warn(
+        '[resolveTariffs] Не удалось обновить комиссии WB, используем кэш:',
+        error.message
+      );
+      commissionsBySubject = hydrated.commissionsBySubject;
+    } else {
+      throw error;
+    }
+  }
+
+  let boxTariffs = hydrated?.boxTariffs || null;
+  if (!boxTariffs) {
+    await sleep(600);
+    boxTariffs = await fetchBoxTariffs();
+  }
+
   const tariffCache = serializeTariffCache(commissionsBySubject, boxTariffs);
   return { commissionsBySubject, boxTariffs, tariffCache };
 }
@@ -594,7 +621,9 @@ export async function fetchWbCatalogSnapshot(token, options = {}) {
   };
 
   return withWbApiToken(token, async () => {
-    const { commissionsBySubject, boxTariffs, tariffCache } = await resolveTariffs(wbCache);
+    const { commissionsBySubject, boxTariffs, tariffCache } = await resolveTariffs(wbCache, {
+      forceRefreshAll: mode === 'full',
+    });
 
     const [
       pricesByNmId,
