@@ -65,8 +65,8 @@ const row = calculateUnitEconomicsRow(ARTICLE, baseSettings);
 console.log('8030700646 @ 7000₽ — УСН 6% + НДС 5% с цены\n');
 
 check(
-  'комиссия FBS 35.3% (48ч из настроек, не 29ч из кабинета)',
-  near(row.fbsCategoryRate, 0.353, 0.008) && near(row.fbsCommissionRub, 2471, 20)
+  'комиссия FBS = база 24.2% + 1.8 п.п. при 48ч (не +11.1)',
+  near(row.fbsCategoryRate, 0.26, 0.001) && near(row.fbsCommissionRub, 7000 * 0.26, 5)
 );
 check(
   'в комиссии используются 48ч настроек',
@@ -190,8 +190,9 @@ const ARTICLE_77112 = {
   basePrice: 5000,
   ourPrice: 5000,
   purchasePrice: 406,
-  fboCategoryRate: 0.203,
-  fbsCategoryRate: 0.238,
+  fboCategoryRate: 0.32,
+  // kgvpMarketplace = ставка слайдера на 30 ч (как на скрине WB 35.50%)
+  fbsCategoryRate: 0.355,
   fbsAvgDeliveryHours: 29,
   lengthCm: 35,
   widthCm: 12,
@@ -218,11 +219,11 @@ const wbPortalSettings = mergeUnitSettings({
 
 const row77112 = calculateUnitEconomicsRow(ARTICLE_77112, wbPortalSettings);
 
-console.log('\n77112 @ 5000₽ — Сучкорезы (калькулятор WB)\n');
+console.log('\n77112 @ 5000₽ — шкала WB 30ч=35.5% … 72ч=39.7%\n');
 
 check(
-  'комиссия FBS ~34.9% = 1745₽ (48ч, kgvp + 3.5% + надбавка)',
-  near(row77112.fbsCategoryRate, 0.349, 0.005) && near(row77112.fbsCommissionRub, 1745, 5)
+  '48ч: 35.5% + 1.8 п.п. = 37.3% (не 46%)',
+  near(row77112.fbsCategoryRate, 0.373, 0.0005) && near(row77112.fbsCommissionRub, 5000 * 0.373, 2)
 );
 check(
   'факт из отчёта не подменяет тарифную комиссию',
@@ -233,8 +234,70 @@ check(
   row77112.fbsAvgDeliveryHours === 48 && row77112.fbsAvgDeliveryHoursReport === 29
 );
 check(
-  'надбавка за доставку 11.1 п.п. при 48ч',
-  near(row77112.fbsDeliverySurcharge, 0.111, 0.001)
+  'премия при 48ч = 1.8 п.п. (не 11.1)',
+  near(row77112.fbsDeliverySurcharge, 0.018, 0.0005)
+);
+
+const row30 = calculateUnitEconomicsRow(ARTICLE_77112, {
+  ...wbPortalSettings,
+  fbsAvgDeliveryHours: 30,
+});
+const row72 = calculateUnitEconomicsRow(ARTICLE_77112, {
+  ...wbPortalSettings,
+  fbsAvgDeliveryHours: 72,
+});
+const row31 = calculateUnitEconomicsRow(ARTICLE_77112, {
+  ...wbPortalSettings,
+  fbsAvgDeliveryHours: 31,
+});
+check('30ч = база 35.50%', near(row30.fbsCategoryRate, 0.355, 0.0005));
+check('72ч = 39.70% (база + 4.2 п.п.)', near(row72.fbsCategoryRate, 0.397, 0.0005));
+check(
+  'каждый час: 31ч = 30ч + 0.1 п.п. (не корзина 30/48/72)',
+  near(row31.fbsCategoryRate, 0.356, 0.0005)
+);
+
+// Опрыскиватель / категория ~35% — регресс «не 46.1%»
+const SPRAYER = {
+  vendorCode: '8060700041',
+  salePrice: 22450,
+  basePrice: 22450,
+  ourPrice: 22450,
+  purchasePrice: 10000,
+  fboCategoryRate: 0.32,
+  fbsCategoryRate: 0.35,
+  stockFbs: 1,
+};
+const sprayer = calculateUnitEconomicsRow(SPRAYER, {
+  ...wbPortalSettings,
+  fbsAvgDeliveryHours: 48,
+});
+check(
+  '8060700041 @ 48ч: ~36.8% (не 46.1% / 10349₽)',
+  near(sprayer.fbsCategoryRate, 0.368, 0.0005) &&
+    near(sprayer.fbsCommissionRub, 22450 * 0.368, 5) &&
+    sprayer.fbsCommissionRub < 9000
+);
+
+// Пылесос строительный: rate30 = kgvpMarketplace 34.5%
+const VACUUM = {
+  vendorCode: 'pilesos-kolner',
+  subjectName: 'Пылесосы строительные',
+  salePrice: 7000,
+  basePrice: 7000,
+  ourPrice: 7000,
+  purchasePrice: 3490,
+  fboCategoryRate: 0.31,
+  fbsCategoryRate: 0.345,
+  stockFbs: 1,
+};
+const vacuum = calculateUnitEconomicsRow(VACUUM, {
+  ...wbPortalSettings,
+  fbsAvgDeliveryHours: 48,
+});
+check(
+  'пылесос @ 7000 / 3490: комиссия 36.3% при 48ч',
+  near(vacuum.fbsCategoryRate, 0.363, 0.0005) && near(vacuum.fbsCommissionRub, 7000 * 0.363, 3)
 );
 
 console.log('Breakdown 77112:', {
@@ -244,6 +307,15 @@ console.log('Breakdown 77112:', {
   taxRub: Math.round(row77112.taxRub),
   profitFbs: Math.round(row77112.profitFbs),
   marginFbs: row77112.marginFbs,
+});
+console.log('Sprayer 48ч:', {
+  rate: sprayer.fbsCategoryRate,
+  commission: Math.round(sprayer.fbsCommissionRub),
+});
+console.log('Vacuum 48ч:', {
+  rate: vacuum.fbsCategoryRate,
+  commission: Math.round(vacuum.fbsCommissionRub),
+  profit: Math.round(vacuum.profitFbs),
 });
 
 if (failed > 0) {

@@ -196,10 +196,17 @@ function logisticsTitle(row, mode) {
 
 function fbsCommissionTitle(row) {
   if (row.fbsCategoryRate == null) return 'Комиссия FBS не рассчитана';
-  const baseRate = row.fbsCategoryRate - (row.fbsDeliverySurcharge || 0);
-  const parts = [`кат. ${fmtPct(baseRate)} (WB)`];
-  if (row.fbsDeliverySurcharge > 0) {
-    parts.push(`+${fmtPct(row.fbsDeliverySurcharge)} за ${row.fbsAvgDeliveryHours}ч`);
+  const baseRate =
+    row.fbsCategoryBaseRate != null
+      ? row.fbsCategoryBaseRate
+      : row.fbsCategoryRate - (row.fbsDeliverySurcharge || 0);
+  const hours = row.fbsAvgDeliveryHours;
+  // Как в калькуляторе WB: один итоговый % по часам (30 ч = база, 72 ч = макс.)
+  const parts = [`${fmtPct(row.fbsCategoryRate)} при ${hours ?? '—'}ч`];
+  if (row.fbsDeliverySurcharge > 0 && baseRate != null) {
+    parts.push(`база ${fmtPct(baseRate)} (30ч)`);
+  } else if (baseRate != null) {
+    parts.push(`база WB ${fmtPct(baseRate)}`);
   }
   if (
     row.fbsAvgDeliveryHoursReport != null &&
@@ -208,10 +215,8 @@ function fbsCommissionTitle(row) {
     parts.push(`факт WB ${fmtNum(row.fbsAvgDeliveryHoursReport, 1)}ч`);
   }
   if (row.fboTotalRate != null && row.fboCategoryRate != null) {
-    parts.push(`+ ${fmtPct(row.fboTotalRate - row.fboCategoryRate)} доп.`);
-  }
-  if (row.fbsTotalRate != null) {
-    parts.push(`= ${fmtPct(row.fbsTotalRate)} итог`);
+    const extra = row.fboTotalRate - row.fboCategoryRate;
+    if (extra > 0) parts.push(`+ ${fmtPct(extra)} доп.`);
   }
   return parts.join(' · ');
 }

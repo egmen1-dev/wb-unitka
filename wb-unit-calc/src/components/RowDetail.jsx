@@ -48,12 +48,18 @@ export default function RowDetail({ row, onClose }) {
             <dd className="font-medium">
               {fmtMoney(row.fbsCommissionRub)}
               <span className="block text-xs font-normal text-slate-500">
-                кат. {fmtPct(row.fbsCategoryRate - (row.fbsDeliverySurcharge || 0))}
+                {fmtPct(row.fbsCategoryRate)} при {row.fbsAvgDeliveryHours ?? '—'}ч
                 {row.fbsDeliverySurcharge > 0
-                  ? ` +${fmtPct(row.fbsDeliverySurcharge)} (${row.fbsAvgDeliveryHours}ч)`
+                  ? ` · база ${fmtPct(
+                      row.fbsCategoryBaseRate ??
+                        row.fbsCategoryRate - row.fbsDeliverySurcharge
+                    )} (30ч)`
                   : ''}
-                {' '}
-                + {fmtPct(row.fboTotalRate - row.fboCategoryRate)} доп.
+                {row.fboTotalRate != null &&
+                row.fboCategoryRate != null &&
+                row.fboTotalRate - row.fboCategoryRate > 0
+                  ? ` + ${fmtPct(row.fboTotalRate - row.fboCategoryRate)} доп.`
+                  : ''}
               </span>
             </dd>
           </div>

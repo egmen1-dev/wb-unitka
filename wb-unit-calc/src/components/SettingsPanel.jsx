@@ -35,7 +35,7 @@ const NUMBER_FIELDS = [
     key: 'fbsAvgDeliveryHours',
     label: 'FBS: время доставки, ч',
     step: 1,
-    hint: 'Для надбавки к комиссии (калькулятор WB, обычно 48)',
+    hint: 'Слайдер WB 30–72 ч: база на 30 ч, до +4,2 п.п. на 72 ч (обычно 48)',
   },
   { key: 'returnLogisticsMarkup', label: 'Наценка возврата, %', step: 0.01 },
   { key: 'defaultWarehouseCoeff', label: 'Коэфф. склада FBO', step: 0.1 },

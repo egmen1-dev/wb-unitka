@@ -10,7 +10,12 @@ import {
   serializeTariffCache,
   hydrateTariffCache,
 } from '../lib/wb-tariff-cache.js';
-import { resolveFbsCategoryRate, calcFbsAvgDeliverySurcharge } from '../lib/unit-economics/fbs-commission.js';
+import {
+  resolveFbsCategoryRate,
+  calcFbsDeliveryHoursPremium,
+  calcFbsRateForHours,
+  FBS_COMMISSION_SPAN_PP,
+} from '../lib/unit-economics/fbs-commission.js';
 
 let failed = 0;
 function check(label, ok) {
@@ -31,7 +36,7 @@ const old = {
 };
 check('2h cache: box still fresh, commissions stale', isTariffCacheFresh(old) && !isCommissionCacheFresh(old));
 
-const commissions = new Map([[42, { fboCategory: 0.203, fbsCategory: 0.238 }]]);
+const commissions = new Map([[42, { fboCategory: 0.32, fbsCategory: 0.355 }]]);
 const box = {
   defaultTariff: { warehouseName: 'Коледино', warehouseCoeff: 1 },
   byName: new Map(),
@@ -41,19 +46,29 @@ const box = {
 };
 const serialized = serializeTariffCache(commissions, box);
 const hydrated = hydrateTariffCache(serialized);
-check('hydrate restores commission entry', hydrated?.commissionsBySubject.get(42)?.fbsCategory === 0.238);
+check('hydrate restores commission entry', hydrated?.commissionsBySubject.get(42)?.fbsCategory === 0.355);
 
-const surcharge48 = calcFbsAvgDeliverySurcharge(48);
-check('48h delivery surcharge ≈ 11.1 п.п.', Math.abs(surcharge48 - 0.111) < 0.0005);
+check('span 30→72 = 4.2 п.п.', Math.abs(FBS_COMMISSION_SPAN_PP - 0.042) < 1e-9);
+check('30ч premium = 0', Math.abs(calcFbsDeliveryHoursPremium(30)) < 1e-12);
+check('48ч premium = 1.8 п.п.', Math.abs(calcFbsDeliveryHoursPremium(48) - 0.018) < 1e-9);
+check('72ч premium = 4.2 п.п.', Math.abs(calcFbsDeliveryHoursPremium(72) - 0.042) < 1e-9);
+check('47ч ≠ 48ч (почасовой, не корзина)', calcFbsDeliveryHoursPremium(47) < calcFbsDeliveryHoursPremium(48));
+check(
+  '35.5%@30ч → 39.7%@72ч',
+  Math.abs(calcFbsRateForHours(0.355, 30) - 0.355) < 1e-9 &&
+    Math.abs(calcFbsRateForHours(0.355, 72) - 0.397) < 1e-9
+);
 
 const fbs = resolveFbsCategoryRate({
-  fbsCategoryRate: 0.238,
-  fboCategoryRate: 0.203,
+  fbsCategoryRate: 0.355,
+  fboCategoryRate: 0.32,
   avgDeliveryHours: 48,
 });
 check(
-  'FBS = kgvpSupplier + 48h surcharge (не +3.5%)',
-  fbs.fbsCategorySource === 'api' && Math.abs(fbs.fbsCategoryRate - (0.238 + surcharge48)) < 1e-9
+  'FBS = kgvpMarketplace(30ч) + lerp по часу (не +11.1)',
+  fbs.fbsCategorySource === 'api' &&
+    Math.abs(fbs.fbsCategoryBaseRate - 0.355) < 1e-9 &&
+    Math.abs(fbs.fbsCategoryRate - 0.373) < 1e-9
 );
 
 if (failed) {
